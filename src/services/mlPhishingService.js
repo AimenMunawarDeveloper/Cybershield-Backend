@@ -1,21 +1,22 @@
 /**
  * ML Phishing Detection Service
- * Integrates Python ML pipeline with Node.js backend
+ * Integrates Python ML pipeline (EmailDetector / MessagingDetector) with Node.js backend.
+ * Uses model_artifacts in ml_pipeline for email and WhatsApp phishing models.
  */
 
 const { spawn } = require('child_process');
 const path = require('path');
 
+const RUNNER_SCRIPT = path.join(__dirname, '..', 'ml_pipeline', 'run_inference.py');
+const BACKEND_ROOT = path.join(__dirname, '..', '..');
+
 class MLPhishingService {
-  constructor() {
-    this.modelPath = path.join(__dirname, '..', '..', 'models', 'phishing_detector.pth');
-    this.scalerPath = path.join(__dirname, '..', '..', 'models', 'phishing_detector_scaler.pkl');
-  }
+  constructor() {}
 
   /**
-   * Predict phishing probability for a user-reported incident
-   * @param {Object} incidentData - Incident data from user report
-   * @returns {Promise<Object>} Prediction results
+   * Predict phishing probability for a user-reported incident using ML pipeline only.
+   * @param {Object} incidentData - Formatted incident (use formatIncidentForML on raw report)
+   * @returns {Promise<Object>} { success, is_phishing, phishing_probability, confidence, error? }
    */
   async predictIncident(incidentData) {
     try {
@@ -28,53 +29,20 @@ class MLPhishingService {
         error: error.message,
         is_phishing: null,
         phishing_probability: null,
-        confidence: null
+        confidence: null,
       };
     }
   }
 
   /**
-   * Call Python ML pipeline for prediction
+   * Call Python ML pipeline via run_inference.py script.
    * @private
    */
   _callPythonPredictor(incidentData) {
     return new Promise((resolve, reject) => {
-      const pythonCode = `
-import sys
-import json
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'ml_pipeline'))
-
-from inference_service import PhishingInferenceService
-
-try:
-    # Read incident data from stdin
-    incident_json = sys.stdin.read()
-    incident_data = json.loads(incident_json)
-    
-    # Initialize service
-    model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_detector.pth')
-    scaler_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_detector_scaler.pkl')
-    
-    service = PhishingInferenceService(model_path=model_path, scaler_path=scaler_path)
-    
-    # Predict
-    result = service.predict_incident(incident_data)
-    
-    # Output result as JSON
-    print(json.dumps(result))
-except Exception as e:
-    error_result = {
-        'success': False,
-        'error': str(e),
-        'is_phishing': None
-    }
-    print(json.dumps(error_result))
-    sys.exit(1)
-      `;
-
-      const python = spawn('python', ['-c', pythonCode], {
-        cwd: path.join(__dirname, '..', '..')
+      const python = spawn('python', [RUNNER_SCRIPT], {
+        cwd: BACKEND_ROOT,
+        env: { ...process.env, PYTHONPATH: path.join(BACKEND_ROOT, 'src') },
       });
 
       let stdout = '';
@@ -93,7 +61,6 @@ except Exception as e:
           reject(new Error(`Python process exited with code ${code}: ${stderr}`));
           return;
         }
-
         try {
           const result = JSON.parse(stdout.trim());
           resolve(result);
@@ -106,113 +73,104 @@ except Exception as e:
         reject(new Error(`Failed to spawn Python process: ${error.message}`));
       });
 
-      // Send incident data to Python
       python.stdin.write(JSON.stringify(incidentData));
       python.stdin.end();
     });
   }
 
   /**
-   * Extract features from incident (for analysis/debugging)
-   * @param {Object} incidentData - Incident data
+   * Extract features from incident (for analysis/debugging). Uses ML pipeline.
+   * @param {Object} incidentData - Formatted incident data
    * @returns {Promise<Object>} Extracted features
    */
   async extractFeatures(incidentData) {
+    const extractScript = path.join(__dirname, '..', 'ml_pipeline', 'run_extract_features.py');
     try {
-      const pythonCode = `
-import sys
-import json
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'ml_pipeline'))
-
-from inference_service import PhishingInferenceService
-
-try:
-    incident_json = sys.stdin.read()
-    incident_data = json.loads(incident_json)
-    
-    service = PhishingInferenceService()
-    result = service.extract_features(incident_data)
-    
-    print(json.dumps(result))
-except Exception as e:
-    error_result = {
-        'success': False,
-        'error': str(e)
-    }
-    print(json.dumps(error_result))
-    sys.exit(1)
-      `;
-
-      const python = spawn('python', ['-c', pythonCode], {
-        cwd: path.join(__dirname, '..', '..')
+      const python = spawn('python', [extractScript], {
+        cwd: BACKEND_ROOT,
+        env: { ...process.env, PYTHONPATH: path.join(BACKEND_ROOT, 'src') },
       });
-
       let stdout = '';
       let stderr = '';
-
-      python.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      python.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
+      python.stdout.on('data', (d) => { stdout += d.toString(); });
+      python.stderr.on('data', (d) => { stderr += d.toString(); });
       return new Promise((resolve, reject) => {
         python.on('close', (code) => {
           if (code !== 0) {
-            reject(new Error(`Python process exited with code ${code}: ${stderr}`));
+            reject(new Error(`Python exited ${code}: ${stderr}`));
             return;
           }
-
           try {
-            const result = JSON.parse(stdout.trim());
-            resolve(result);
-          } catch (parseError) {
-            reject(new Error(`Failed to parse Python output: ${stdout}`));
+            resolve(JSON.parse(stdout.trim()));
+          } catch (e) {
+            reject(new Error(`Failed to parse output: ${stdout}`));
           }
         });
-
-        python.on('error', (error) => {
-          reject(new Error(`Failed to spawn Python process: ${error.message}`));
-        });
-
+        python.on('error', (e) => reject(new Error(`Spawn failed: ${e.message}`)));
         python.stdin.write(JSON.stringify(incidentData));
         python.stdin.end();
       });
     } catch (error) {
       console.error('Feature Extraction Error:', error);
-      return {
-        success: false,
-        error: error.message,
-        features: null
-      };
+      return { success: false, error: error.message, features: null };
     }
   }
 
   /**
-   * Format incident for ML pipeline (phishing vs non-phishing from message content only).
-   * @param {Object} reportData - Raw incident: message/text, messageType, metadata, urls, etc.
-   * @returns {Object} Formatted incident for prediction
+   * Format incident for ML pipeline. Matches training:
+   * - Email: text = subject + body, metadata from/subject/date; urls.
+   * - WhatsApp: text = message, metadata timestamp/from_phone/has_url; urls.
    */
   formatIncidentForML(reportData) {
+    const msgType = (reportData.messageType || reportData.message_type || 'email').toLowerCase();
+    const isEmail = msgType !== 'whatsapp' && msgType !== 'sms' && msgType !== 'messaging';
+    const body = reportData.message || reportData.text || '';
+    const subject = reportData.subject || '';
+    const fromVal = reportData.from || reportData.sender || '';
+    const urls = reportData.urls || reportData.links || [];
+    const dateOrTs = reportData.date || reportData.timestamp || new Date().toISOString();
+
+    const text = isEmail
+      ? (subject ? `${subject} ${body}`.trim() : body)
+      : body;
+
+    const baseMetadata = {
+      from: fromVal,
+      to: reportData.to || [],
+      cc: reportData.cc || [],
+      bcc: reportData.bcc || [],
+      headers: reportData.headers || {},
+      ...(reportData.metadata || {})
+    };
+
+    if (isEmail) {
+      return {
+        text,
+        message_type: 'email',
+        metadata: {
+          ...baseMetadata,
+          from_email: reportData.fromEmail || reportData.sender_email || fromVal || '',
+          subject,
+          date: dateOrTs,
+        },
+        urls,
+        html_content: reportData.htmlContent || reportData.html_content || null
+      };
+    }
+
     return {
-      text: reportData.message || reportData.text || '',
-      message_type: reportData.messageType || reportData.message_type || 'email',
+      text,
+      message_type: 'whatsapp',
       metadata: {
-        from: reportData.from || reportData.sender || '',
-        from_email: reportData.fromEmail || reportData.sender_email || '',
-        subject: reportData.subject || '',
-        date: reportData.date || reportData.timestamp || new Date().toISOString(),
-        to: reportData.to || [],
-        cc: reportData.cc || [],
-        bcc: reportData.bcc || [],
-        headers: reportData.headers || {},
-        ...(reportData.metadata || {})
+        ...baseMetadata,
+        from_phone: reportData.from_phone || reportData.from || reportData.sender || '',
+        timestamp: dateOrTs,
+        has_url: urls.length > 0 ? true : !!reportData.has_url,
+        has_email: !!reportData.has_email,
+        has_phone: !!reportData.has_phone,
       },
-      urls: reportData.urls || reportData.links || [],
-      html_content: reportData.htmlContent || reportData.html_content || null
+      urls,
+      html_content: null
     };
   }
 }
