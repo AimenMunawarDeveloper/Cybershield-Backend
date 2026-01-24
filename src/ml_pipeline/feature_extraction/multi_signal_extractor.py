@@ -16,6 +16,16 @@ class MultiSignalFeatureExtractor:
         self.linguistic_extractor = LinguisticFeatureExtractor()
         self.structural_extractor = StructuralFeatureExtractor()
 
+    def _apply_url_weight(self, all_features):
+        """Scale down url_* features. No-op if not used; safe to keep for future tuning."""
+        for k in list(all_features.keys()):
+            if k.startswith('url_'):
+                v = all_features[k]
+                try:
+                    all_features[k] = float(v) * 0.5
+                except (TypeError, ValueError):
+                    pass
+
     def extract(self,
                 text: str,
                 message_type: str = "email",
@@ -39,6 +49,7 @@ class MultiSignalFeatureExtractor:
                 empty_url_features = self.url_extractor._empty_features()
                 all_features.update({f'url_{k}': v for k, v in empty_url_features.items()})
                 all_features['url_count'] = 0
+        self._apply_url_weight(all_features)
         if metadata:
             metadata_features = self.metadata_extractor.extract(metadata, message_type)
             all_features.update({f'metadata_{k}': v for k, v in metadata_features.items()})
