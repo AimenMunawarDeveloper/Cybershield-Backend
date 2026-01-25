@@ -16,13 +16,37 @@ class MultiSignalFeatureExtractor:
         self.linguistic_extractor = LinguisticFeatureExtractor()
         self.structural_extractor = StructuralFeatureExtractor()
 
-    def _apply_url_weight(self, all_features):
-        """Scale down url_* features. No-op if not used; safe to keep for future tuning."""
+    def _apply_feature_weights(self, all_features):
+        """Reduce rigidity: scale down url/link/keyword features so we don't over-flag phishing."""
+        w_url = 0.5
+        w_link = 0.5
+        w_kw = 0.8
         for k in list(all_features.keys()):
             if k.startswith('url_'):
                 v = all_features[k]
                 try:
-                    all_features[k] = float(v) * 0.5
+                    all_features[k] = float(v) * w_url
+                except (TypeError, ValueError):
+                    pass
+        for k in ('text_has_url', 'text_url_count'):
+            if k in all_features:
+                v = all_features[k]
+                try:
+                    all_features[k] = float(v) * w_link
+                except (TypeError, ValueError):
+                    pass
+        for k in list(all_features.keys()):
+            if k.startswith('text_pattern_') and 'http' in k:
+                v = all_features[k]
+                try:
+                    all_features[k] = float(v) * w_link
+                except (TypeError, ValueError):
+                    pass
+        for k in ('text_phishing_keyword_count', 'text_phishing_keyword_ratio'):
+            if k in all_features:
+                v = all_features[k]
+                try:
+                    all_features[k] = float(v) * w_kw
                 except (TypeError, ValueError):
                     pass
 
@@ -49,7 +73,7 @@ class MultiSignalFeatureExtractor:
                 empty_url_features = self.url_extractor._empty_features()
                 all_features.update({f'url_{k}': v for k, v in empty_url_features.items()})
                 all_features['url_count'] = 0
-        self._apply_url_weight(all_features)
+        self._apply_feature_weights(all_features)
         if metadata:
             metadata_features = self.metadata_extractor.extract(metadata, message_type)
             all_features.update({f'metadata_{k}': v for k, v in metadata_features.items()})

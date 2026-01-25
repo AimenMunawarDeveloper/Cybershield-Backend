@@ -13,7 +13,10 @@ from .utils import to_float, correlate_stub
 
 class EmailDetector:
 
-    W_HEURISTIC, W_ML, W_DEEP = 0.2, 0.4, 0.4
+    W_HEURISTIC, W_ML, W_DEEP = 0.12, 0.36, 0.36
+    W_NEUTRAL = 0.12
+    SCORE_COMPRESS = 0.78
+    PHISHING_THRESHOLD = 0.55
 
     def __init__(
         self,
@@ -101,10 +104,15 @@ class EmailDetector:
         try:
             text = incident.get("text", "") or ""
             f = self._extract_features(incident)
-            p = min(1.0, max(0.0, self.W_HEURISTIC * self._heuristic_score(incident) + self.W_ML * self._ml_proba(f) + self.W_DEEP * self._deep_proba(f)))
+            h = self._heuristic_score(incident)
+            ml = self._ml_proba(f)
+            deep = self._deep_proba(f)
+            raw = self.W_HEURISTIC * h + self.W_ML * ml + self.W_DEEP * deep + self.W_NEUTRAL * 0.5
+            p = 0.5 + (min(1.0, max(0.0, raw)) - 0.5) * self.SCORE_COMPRESS
+            p = min(1.0, max(0.0, p))
             return {
                 "success": True,
-                "is_phishing": p > 0.5,
+                "is_phishing": p > self.PHISHING_THRESHOLD,
                 "phishing_probability": round(p, 4),
                 "legitimate_probability": round(1.0 - p, 4),
                 "confidence": round(abs(p - 0.5) * 2.0, 4),
@@ -117,6 +125,10 @@ class EmailDetector:
 
 
 class MessagingDetector:
+
+    W_NEUTRAL = 0.12
+    SCORE_COMPRESS = 0.60
+    PHISHING_THRESHOLD = 0.53
 
     def __init__(
         self,
@@ -215,10 +227,16 @@ class MessagingDetector:
         try:
             text = incident.get("text", "") or ""
             f = self._extract_features(incident)
-            p = (self._lexical_proba(text) + self._structural_proba(f) + self._deep_proba(f)) / 3.0
+            lex = self._lexical_proba(text)
+            struct = self._structural_proba(f)
+            deep = self._deep_proba(f)
+            raw = (lex + struct + deep) / 3.0
+            raw = raw * (1.0 - self.W_NEUTRAL) + self.W_NEUTRAL * 0.5
+            p = 0.5 + (min(1.0, max(0.0, raw)) - 0.5) * self.SCORE_COMPRESS
+            p = min(1.0, max(0.0, p))
             return {
                 "success": True,
-                "is_phishing": p > 0.5,
+                "is_phishing": p > self.PHISHING_THRESHOLD,
                 "phishing_probability": round(p, 4),
                 "legitimate_probability": round(1.0 - p, 4),
                 "confidence": round(abs(p - 0.5) * 2.0, 4),
