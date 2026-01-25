@@ -11,7 +11,7 @@ class TextFeatureExtractor:
         self.phishing_keywords = [
             'urgent', 'verify', 'account', 'suspended', 'security', 'click',
             'update', 'confirm', 'immediately', 'limited time', 'winner',
-            'prize', 'congratulations', 'free', 'claim', 'expire', 'verify',
+            'prize', 'congratulations', 'claim', 'expire',
             'password', 'login', 'bank', 'payment', 'invoice', 'refund',
             'unauthorized', 'locked', 'restricted', 'action required'
         ]
@@ -39,9 +39,12 @@ class TextFeatureExtractor:
             'sentence_count': len(re.split(r'[.!?]+', text)),
             'paragraph_count': len([p for p in text.split('\n') if p.strip()]),
         }
-        keyword_counts = sum(1 for keyword in self.phishing_keywords if keyword in text_lower)
-        features['phishing_keyword_count'] = keyword_counts
-        features['phishing_keyword_ratio'] = keyword_counts / word_count if word_count > 0 else 0
+        # Total occurrences (more keywords => higher count => stronger effect on output)
+        total_occurrences = 0
+        for keyword in self.phishing_keywords:
+            total_occurrences += len(re.findall(r'\b' + re.escape(keyword) + r'\b', text_lower))
+        features['phishing_keyword_count'] = total_occurrences
+        features['phishing_keyword_ratio'] = total_occurrences / word_count if word_count > 0 else 0
         pattern_matches = {}
         for pattern in self.suspicious_patterns:
             matches = len(re.findall(pattern, text, re.IGNORECASE))
