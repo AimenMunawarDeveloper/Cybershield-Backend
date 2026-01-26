@@ -16,7 +16,7 @@ class EmailDetector:
     W_HEURISTIC, W_ML, W_DEEP = 0.12, 0.36, 0.36
     W_NEUTRAL = 0.12
     SCORE_COMPRESS = 0.78
-    PHISHING_THRESHOLD = 0.55
+    PHISHING_THRESHOLD = 0.52
 
     def __init__(
         self,
