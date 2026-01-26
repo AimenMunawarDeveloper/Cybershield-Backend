@@ -1,4 +1,4 @@
-const mlPhishingService = require("../services/mlPhishingService");
+const whatsappEmailMlService = require("../services/whatsappEmailMlService");
 const Incident = require("../models/Incident");
 
 /**
@@ -33,8 +33,8 @@ async function analyzeIncident(req, res) {
       timestamp: body.timestamp || body.date || new Date().toISOString(),
     };
 
-    const formatted = mlPhishingService.formatIncidentForML(reportData);
-    const result = await mlPhishingService.predictIncident(formatted);
+    const formatted = whatsappEmailMlService.formatIncidentForML(reportData);
+    const result = await whatsappEmailMlService.predictIncident(formatted);
 
     // Save incident to MongoDB database
     const userId = req.user?._id || null;

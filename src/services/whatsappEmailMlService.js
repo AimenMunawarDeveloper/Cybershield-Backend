@@ -1,5 +1,5 @@
 /**
- * ML Phishing Detection Service
+ * WhatsApp & Email ML Detection Service
  * Integrates Python ML pipeline (EmailDetector / MessagingDetector) with Node.js backend.
  * Uses model_artifacts in ml_pipeline for email and WhatsApp phishing models.
  */
@@ -10,7 +10,7 @@ const path = require('path');
 const RUNNER_SCRIPT = path.join(__dirname, '..', 'ml_pipeline', 'run_inference.py');
 const BACKEND_ROOT = path.join(__dirname, '..', '..');
 
-class MLPhishingService {
+class WhatsappEmailMlService {
   constructor() {}
 
   /**
@@ -175,4 +175,4 @@ class MLPhishingService {
   }
 }
 
-module.exports = new MLPhishingService();
+module.exports = new WhatsappEmailMlService();

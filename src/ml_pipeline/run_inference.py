@@ -1,7 +1,7 @@
 """
 Standalone runner for ML phishing inference.
 Reads JSON incident from stdin, writes JSON result to stdout.
-Called by Node.js mlPhishingService.
+Called by Node.js whatsappEmailMlService.
 """
 import sys
 import json
