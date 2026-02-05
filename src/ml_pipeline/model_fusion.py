@@ -81,7 +81,7 @@ class UnifiedPhishingFusion:
                     try:
                         checkpoint = torch.load(advanced_path, map_location='cpu')
                         config = checkpoint.get("model_config", {})
-                        if config.get("use_interleaved_attention", False) or config.get("use_domain_adversarial", False):
+                        if config.get("use_domain_adversarial", False):
                             post_2023_model = advanced_path
                     except:
                         pass
@@ -275,10 +275,8 @@ class UnifiedPhishingFusion:
                             use_uncertainty=model_config.get("use_uncertainty", True),
                             use_interactive_fusion=model_config.get("use_interactive_fusion", True),
                             # POST-2023 flags (default to True for new models, False for backward compat)
-                            use_interleaved_attention=model_config.get("use_interleaved_attention", True),
                             use_domain_adversarial=model_config.get("use_domain_adversarial", True),
-                            use_self_distillation=model_config.get("use_self_distillation", True),
-                            num_groups=model_config.get("num_groups", 4)
+                            use_self_distillation=model_config.get("use_self_distillation", True)
                         ).to(device)
                         print(f"Using ENHANCED Advanced Fusion Meta-Learner (Post-2020 & Post-2023 Techniques):")
                         print(f"Post-2020:")
@@ -286,10 +284,7 @@ class UnifiedPhishingFusion:
                         print(f"  - GNN for Model Relationships (Kaur et al. 2020)")
                         print(f"  - Uncertainty-Aware Deep Ensembles (Ashukha et al. 2020)")
                         print(f"  - Interactive Attention Fusion (Rahman et al. 2021)")
-                        if model_config.get("use_interleaved_attention", True):
-                            print(f"Post-2023 (2026 Publication):")
-                            print(f"  - Interleaved Local-Global Attention (Gemma 2, 2024)")
-                            print(f"  - Group-Query Attention (Gemma 2, 2024)")
+                        print(f"Post-2023 (2026 Publication):")
                         if model_config.get("use_domain_adversarial", True):
                             print(f"  - Domain-Adversarial Training (PRADA, 2025)")
                         if model_config.get("use_self_distillation", True):

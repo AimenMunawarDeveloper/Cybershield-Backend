@@ -31,16 +31,29 @@ class FocalLoss(nn.Module):
     Focal Loss for Calibration (Mukhoti et al. 2020)
     Addresses class imbalance and improves calibration.
     """
-    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'mean'):
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'mean', label_smoothing: float = 0.0):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
+        self.label_smoothing = label_smoothing  # Disabled by default for stability
     
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        # Standard Focal Loss (label smoothing disabled for now - causes collapse)
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none', label_smoothing=self.label_smoothing)
         pt = torch.exp(-ce_loss)
-        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        
+        # IMPROVED: Apply alpha per-class for better class imbalance handling
+        # For binary classification: alpha_t = alpha if target==1, else (1-alpha)
+        # Note: alpha should be set to majority class proportion to weight minority class more
+        if inputs.size(1) == 2:  # Binary classification
+            # alpha_t = alpha for class 1, (1-alpha) for class 0
+            alpha_t = self.alpha * targets.float() + (1 - self.alpha) * (1 - targets.float())
+        else:
+            # Multi-class: use alpha as is (standard Focal Loss)
+            alpha_t = self.alpha
+        
+        focal_loss = alpha_t * (1 - pt) ** self.gamma * ce_loss
         
         if self.reduction == 'mean':
             return focal_loss.mean()
@@ -231,11 +244,14 @@ class ModelRelationshipGNN(nn.Module):
         """
         batch_size = model_embeddings.size(0)
         
-        # Normalize adjacency matrix
-        adj = F.softmax(self.adjacency, dim=-1)
+        # Normalize base adjacency matrix
+        base_adj = F.softmax(self.adjacency, dim=-1)
         
-        # Compute edge features
-        edge_features = []
+        # FIXED: Compute and use dynamic edge weights
+        # Build dynamic adjacency matrix using computed edge weights
+        dynamic_adj = torch.zeros(batch_size, self.num_models, self.num_models, 
+                                  device=model_embeddings.device)
+        
         for i in range(self.num_models):
             for j in range(self.num_models):
                 if i != j:
@@ -244,18 +260,25 @@ class ModelRelationshipGNN(nn.Module):
                         model_embeddings[:, j]
                     ], dim=1)  # (batch, embed_dim * 2)
                     edge_weight = self.edge_mlp(pair)  # (batch, 1)
-                    edge_features.append(edge_weight.squeeze(-1))
+                    dynamic_adj[:, i, j] = edge_weight.squeeze(-1)
+                else:
+                    # Self-connections use base adjacency
+                    dynamic_adj[:, i, j] = base_adj[i, j]
+        
+        # Normalize dynamic adjacency per sample
+        dynamic_adj = F.softmax(dynamic_adj, dim=-1)  # (batch, num_models, num_models)
         
         # Graph convolution
         x = model_embeddings
         for gcn_layer in self.gcn_layers:
-            # Message passing: aggregate from neighbors
+            # Message passing: aggregate from neighbors using dynamic edge weights
             messages = []
             for i in range(self.num_models):
                 neighbor_features = []
                 for j in range(self.num_models):
                     if i != j:
-                        weight = adj[i, j]
+                        # Use dynamic edge weights (batch-specific)
+                        weight = dynamic_adj[:, i, j].unsqueeze(-1)  # (batch, 1)
                         neighbor_features.append(x[:, j] * weight)
                 if neighbor_features:
                     aggregated = sum(neighbor_features)
@@ -275,6 +298,9 @@ class UncertaintyEstimator(nn.Module):
     """
     Uncertainty-Aware Deep Ensembles (Ashukha et al. 2020)
     Estimates both aleatoric and epistemic uncertainty.
+    
+    IMPROVED: Aggregates uncertainties from base models (email, whatsapp, voice)
+    and combines with fusion model uncertainty for more accurate uncertainty estimation.
     """
     def __init__(self, embed_dim: int, num_classes: int = 2):
         super(UncertaintyEstimator, self).__init__()
@@ -294,9 +320,23 @@ class UncertaintyEstimator(nn.Module):
             nn.Linear(embed_dim // 2, 1),
             nn.Sigmoid()
         )
+        
+        # IMPROVED: Base model uncertainty aggregation (for combining base model uncertainties)
+        self.base_uncertainty_aggregator = nn.Sequential(
+            nn.Linear(3, 16),  # 3 base models (email, whatsapp, voice)
+            nn.ReLU(),
+            nn.Linear(16, 1),
+            nn.Sigmoid()
+        )
     
-    def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, features: torch.Tensor, base_model_uncertainties: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
+        IMPROVED: Aggregates uncertainties from base models and combines with fusion uncertainty.
+        
+        Args:
+            features: (batch, embed_dim) - fusion model features
+            base_model_uncertainties: Optional (batch, 3) - uncertainties from base models [email, whatsapp, voice]
+                                     Each value is 1 - confidence (higher = more uncertain)
         Returns:
             logits: (batch, num_classes)
             aleatoric_uncertainty: (batch, num_classes)
@@ -304,12 +344,35 @@ class UncertaintyEstimator(nn.Module):
         """
         logits = self.aleatoric_head(features)
         
-        # Aleatoric: variance of predictions
+        # Aleatoric: variance of predictions (entropy-based)
         probs = F.softmax(logits, dim=-1)
-        aleatoric = probs * (1 - probs)  # Entropy-based uncertainty
+        fusion_aleatoric = probs * (1 - probs)  # Entropy-based uncertainty
         
-        # Epistemic: model confidence
-        epistemic = self.epistemic_head(features)
+        # Epistemic: model confidence from fusion model
+        fusion_epistemic = self.epistemic_head(features)
+        
+        # IMPROVED: Aggregate base model uncertainties if provided
+        if base_model_uncertainties is not None:
+            # base_model_uncertainties: (batch, 3) where each value is 1 - confidence
+            # Aggregate base model uncertainties
+            aggregated_base_uncertainty = self.base_uncertainty_aggregator(base_model_uncertainties)  # (batch, 1)
+            
+            # Combine fusion epistemic uncertainty with base model uncertainties
+            # Weighted combination: 60% fusion, 40% base models
+            epistemic = 0.6 * fusion_epistemic + 0.4 * aggregated_base_uncertainty
+            
+            # For aleatoric, also consider base model disagreement
+            # Higher disagreement between base models = higher aleatoric uncertainty
+            base_disagreement = torch.std(base_model_uncertainties, dim=1, keepdim=True)  # (batch, 1)
+            # Expand to match num_classes
+            base_disagreement_expanded = base_disagreement.expand(-1, self.num_classes)  # (batch, num_classes)
+            
+            # Combine fusion aleatoric with base model disagreement
+            aleatoric = 0.7 * fusion_aleatoric + 0.3 * base_disagreement_expanded
+        else:
+            # Fallback to fusion-only uncertainty
+            aleatoric = fusion_aleatoric
+            epistemic = fusion_epistemic
         
         return logits, aleatoric, epistemic
 
@@ -317,127 +380,6 @@ class UncertaintyEstimator(nn.Module):
 # ============================================================================
 # POST-2023 TECHNIQUES (2026 Publication)
 # ============================================================================
-
-class GroupQueryAttention(nn.Module):
-    """
-    Group-Query Attention (Gemma 2, 2024)
-    Efficient attention mechanism that groups queries for better efficiency.
-    """
-    def __init__(self, embed_dim: int, num_heads: int = 12, num_groups: int = 4, dropout: float = 0.1):
-        super(GroupQueryAttention, self).__init__()
-        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
-        assert num_heads % num_groups == 0, "num_heads must be divisible by num_groups"
-        
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.num_groups = num_groups
-        self.head_dim = embed_dim // num_heads
-        self.group_size = num_heads // num_groups
-        self.kv_heads = num_groups  # Number of key-value heads (fewer than query heads)
-        self.kv_dim = self.kv_heads * self.head_dim  # Total KV dimension
-        
-        # Q, K, V projections
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, self.kv_dim)  # Fewer KV heads
-        self.v_proj = nn.Linear(embed_dim, self.kv_dim)  # Fewer KV heads
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
-        
-        self.dropout = nn.Dropout(dropout)
-        self.scale = self.head_dim ** -0.5
-    
-    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, 
-                key_padding_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            query: (batch, seq_len, embed_dim)
-            key: (batch, seq_len, embed_dim)
-            value: (batch, seq_len, embed_dim)
-        Returns:
-            output: (batch, seq_len, embed_dim)
-            attn_weights: (batch, num_heads, seq_len, seq_len)
-        """
-        batch_size, seq_len, _ = query.shape
-        
-        # Project queries to all heads
-        Q = self.q_proj(query).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        
-        # Project keys and values to fewer heads (grouped)
-        K = self.k_proj(key).view(batch_size, seq_len, self.kv_heads, self.head_dim).transpose(1, 2)
-        V = self.v_proj(value).view(batch_size, seq_len, self.kv_heads, self.head_dim).transpose(1, 2)
-        
-        # Expand K, V for grouped queries (repeat each KV head for multiple query heads)
-        K = K.repeat_interleave(self.group_size, dim=1)  # (batch, num_heads, seq_len, head_dim)
-        V = V.repeat_interleave(self.group_size, dim=1)  # (batch, num_heads, seq_len, head_dim)
-        
-        # Scaled dot-product attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) * self.scale
-        
-        if key_padding_mask is not None:
-            scores = scores.masked_fill(key_padding_mask.unsqueeze(1).unsqueeze(2), float('-inf'))
-        
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        
-        output = torch.matmul(attn_weights, V)
-        output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
-        output = self.out_proj(output)
-        
-        return output, attn_weights
-
-
-class InterleavedLocalGlobalAttention(nn.Module):
-    """
-    Interleaved Local-Global Attention (Gemma 2, 2024)
-    
-    NOTE: Gemma 2 uses local attention over token windows in sequences.
-    With only 3 models (3 tokens), true local-global interleaving is limited.
-    This implementation uses:
-    - Local: Self-attention within each model embedding (identity for single embeddings)
-    - Global: Cross-attention across all models
-    
-    For true Gemma 2-style interleaving, we would need tokenized sequences from each model.
-    """
-    def __init__(self, embed_dim: int, num_heads: int = 12, num_groups: int = 4, 
-                 local_window_size: int = 1, dropout: float = 0.1):
-        super(InterleavedLocalGlobalAttention, self).__init__()
-        self.embed_dim = embed_dim
-        self.local_window_size = local_window_size
-        
-        # FIXED: Use Group-Query Attention for both local and global
-        # Local attention: operates on model embeddings (with 3 models, this is effectively self-attention)
-        self.local_attention = GroupQueryAttention(embed_dim, num_heads, num_groups, dropout)
-        
-        # Global attention: cross-model attention
-        self.global_attention = GroupQueryAttention(embed_dim, num_heads, num_groups, dropout)
-        
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.dropout = nn.Dropout(dropout)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (batch, num_models, embed_dim) - 3 model embeddings
-        Returns:
-            output: (batch, num_models, embed_dim)
-        """
-        # FIXED: Proper interleaving pattern
-        # Step 1: Local attention (self-attention within sequence of models)
-        # With 3 models, this allows each model to attend to itself and neighbors
-        residual = x
-        x_norm = self.norm1(x)
-        local_out, _ = self.local_attention(x_norm, x_norm, x_norm)
-        x = residual + self.dropout(local_out)
-        
-        # Step 2: Global attention (cross-model attention)
-        # Each model attends to all other models
-        residual = x
-        x_norm = self.norm2(x)
-        global_out, _ = self.global_attention(x_norm, x_norm, x_norm)
-        x = residual + self.dropout(global_out)
-        
-        return x
-
 
 class GradientReversalFunction(torch.autograd.Function):
     """
@@ -584,11 +526,9 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
     5. GNN for Model Relationships (Kaur et al. 2020)
     
     Post-2023 (2026 Publication):
-    6. Interleaved Local-Global Attention (Gemma 2, 2024)
-    7. Group-Query Attention (Gemma 2, 2024)
-    8. Domain-Adversarial Training (PRADA, 2025)
-    9. Self-Distillation at Layers (Feature Interaction Fusion, 2024)
-    10. Multi-Teacher Distillation (DistilQwen2.5, 2025)
+    6. Domain-Adversarial Training (PRADA, 2025)
+    7. Self-Distillation at Layers (Feature Interaction Fusion, 2024)
+    8. Multi-Teacher Distillation (DistilQwen2.5, 2025)
     """
     
     def __init__(
@@ -605,10 +545,8 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         use_uncertainty: bool = True,
         use_interactive_fusion: bool = True,
         # Post-2023 flags
-        use_interleaved_attention: bool = True,
         use_domain_adversarial: bool = True,
-        use_self_distillation: bool = True,
-        num_groups: int = 4  # For group-query attention
+        use_self_distillation: bool = True
     ):
         super(EnhancedAdvancedFusionMetaLearner, self).__init__()
         
@@ -616,7 +554,6 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         self.num_models = 3
         self.base_feature_dim = base_feature_dim
         self.use_uncertainty = use_uncertainty
-        self.use_interleaved_attention = use_interleaved_attention
         self.use_domain_adversarial = use_domain_adversarial
         self.use_self_distillation = use_self_distillation
         
@@ -635,62 +572,45 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         self.model_positions = nn.Parameter(torch.randn(self.num_models, embed_dim))
         nn.init.xavier_uniform_(self.model_positions)
         
-        # POST-2023: Interleaved Local-Global Attention (Gemma 2, 2024)
-        if use_interleaved_attention:
-            self.interleaved_attention_layers = nn.ModuleList([
-                InterleavedLocalGlobalAttention(embed_dim, num_heads, num_groups, dropout=dropout)
-                for _ in range(num_cross_attn_layers)
-            ])
-        else:
-            # Fallback to standard attention
-            self.cross_attention_layers = nn.ModuleList([
-                nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
-                for _ in range(num_cross_attn_layers)
-            ])
-            self.self_attention_layers = nn.ModuleList([
-                nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
-                for _ in range(num_cross_attn_layers)
-            ])
+        # Standard cross-attention and self-attention layers
+        self.cross_attention_layers = nn.ModuleList([
+            nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
+            for _ in range(num_cross_attn_layers)
+        ])
+        self.self_attention_layers = nn.ModuleList([
+            nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
+            for _ in range(num_cross_attn_layers)
+        ])
         
-        # Layer norms (for interleaved attention, we need fewer norms)
-        if use_interleaved_attention:
-            self.attention_norms = nn.ModuleList([
-                nn.LayerNorm(embed_dim) for _ in range(num_cross_attn_layers)
-            ])
-            self.ff_norms = nn.ModuleList([
-                nn.LayerNorm(embed_dim) for _ in range(num_cross_attn_layers)
-            ])
-        else:
-            self.cross_norms = nn.ModuleList([
-                nn.LayerNorm(embed_dim) for _ in range(num_cross_attn_layers * 2)
-            ])
-            self.self_norms = nn.ModuleList([
-                nn.LayerNorm(embed_dim) for _ in range(num_cross_attn_layers * 2)
-            ])
+        # Layer norms
+        self.cross_norms = nn.ModuleList([
+            nn.LayerNorm(embed_dim) for _ in range(num_cross_attn_layers * 2)
+        ])
+        self.self_norms = nn.ModuleList([
+            nn.LayerNorm(embed_dim) for _ in range(num_cross_attn_layers * 2)
+        ])
         
-        # Feed-forward networks
-        self.ff_networks = nn.ModuleList([
+        # Feed-forward networks with residual connections (2024 technique)
+        self.cross_ff = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(embed_dim, embed_dim * 4),
+                nn.LayerNorm(embed_dim * 4),  # Added LayerNorm for stability
                 nn.GELU(),
                 nn.Dropout(dropout),
                 nn.Linear(embed_dim * 4, embed_dim),
                 nn.Dropout(dropout)
             ) for _ in range(num_cross_attn_layers)
         ])
-        
-        # Keep old FF for backward compatibility
-        if not use_interleaved_attention:
-            self.cross_ff = self.ff_networks
-            self.self_ff = nn.ModuleList([
-                nn.Sequential(
-                    nn.Linear(embed_dim, embed_dim * 4),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(embed_dim * 4, embed_dim),
-                    nn.Dropout(dropout)
-                ) for _ in range(num_cross_attn_layers)
-            ])
+        self.self_ff = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(embed_dim, embed_dim * 4),
+                nn.LayerNorm(embed_dim * 4),  # Added LayerNorm for stability
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(embed_dim * 4, embed_dim),
+                nn.Dropout(dropout)
+            ) for _ in range(num_cross_attn_layers)
+        ])
         
         # NEW: Learnable Gating (Switch Transformers 2021)
         self.use_gating = use_gating
@@ -750,8 +670,9 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
             prev_dim = hidden_dim
         
         # NEW: Uncertainty-Aware Head (Ashukha et al. 2020)
+        # FIXED: Use hidden_dims[0] (aggregated_features dimension) not prev_dim
         if use_uncertainty:
-            self.uncertainty_estimator = UncertaintyEstimator(prev_dim, num_classes=2)
+            self.uncertainty_estimator = UncertaintyEstimator(hidden_dims[0], num_classes=2)
             # Still need regular classifier for backward compatibility
             output_layer = nn.Linear(prev_dim, 2)
         else:
@@ -781,13 +702,16 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         self.dropout = nn.Dropout(dropout)
     
     def forward(self, x: torch.Tensor, return_uncertainty: bool = False, 
-                return_intermediate: bool = False, return_domain_logits: bool = False):
+                return_intermediate: bool = False, return_domain_logits: bool = False,
+                base_model_uncertainties: Optional[torch.Tensor] = None):
         """
         Args:
             x: (batch_size, 24) tensor
             return_uncertainty: Whether to return uncertainty estimates
             return_intermediate: Whether to return intermediate outputs for self-distillation
             return_domain_logits: Whether to return domain discriminator logits
+            base_model_uncertainties: Optional (batch, 3) - uncertainties from base models [email, whatsapp, voice]
+                                     Each value is 1 - confidence (higher = more uncertain)
         Returns:
             dict with 'logits', optionally 'aleatoric_uncertainty', 'epistemic_uncertainty',
             'intermediate_logits', 'domain_logits'
@@ -804,62 +728,40 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         model_embeddings = model_embeddings + self.model_positions.unsqueeze(0)
         model_embeddings = self.dropout(model_embeddings)
         
-        # POST-2023: Interleaved Local-Global Attention (Gemma 2, 2024)
-        intermediate_outputs = []
+        # Standard cross-attention + self-attention
+        cross_norm_idx = 0
+        self_norm_idx = 0
         
-        if self.use_interleaved_attention:
-            # Use interleaved attention
-            for i in range(len(self.interleaved_attention_layers)):
-                # Interleaved attention (local + global)
-                model_embeddings = self.interleaved_attention_layers[i](model_embeddings)
-                
-                # Feed-forward
-                residual = model_embeddings
-                normalized = self.ff_norms[i](model_embeddings)
-                ff_out = self.ff_networks[i](normalized)
-                model_embeddings = residual + self.dropout(ff_out)
-                
-                # Store intermediate outputs for self-distillation
-                if self.use_self_distillation and return_intermediate:
-                    # Aggregate for intermediate classification
-                    aggregated = model_embeddings.mean(dim=1)  # (batch, embed_dim)
-                    # Project through aggregation layers if needed
-                    intermediate_outputs.append(aggregated)
-        else:
-            # Fallback to original cross-attention + self-attention
-            cross_norm_idx = 0
-            self_norm_idx = 0
+        for i in range(len(self.cross_attention_layers)):
+            # Cross-attention
+            cross_norm1 = self.cross_norms[cross_norm_idx]
+            cross_norm2 = self.cross_norms[cross_norm_idx + 1]
+            cross_norm_idx += 2
             
-            for i in range(len(self.cross_attention_layers)):
-                # Cross-attention
-                cross_norm1 = self.cross_norms[cross_norm_idx]
-                cross_norm2 = self.cross_norms[cross_norm_idx + 1]
-                cross_norm_idx += 2
-                
-                normalized = cross_norm1(model_embeddings)
-                cross_attn_out, _ = self.cross_attention_layers[i](
-                    normalized, normalized, normalized
-                )
-                model_embeddings = model_embeddings + self.dropout(cross_attn_out)
-                
-                normalized = cross_norm2(model_embeddings)
-                cross_ff_out = self.cross_ff[i](normalized)
-                model_embeddings = model_embeddings + self.dropout(cross_ff_out)
-                
-                # Self-attention
-                self_norm1 = self.self_norms[self_norm_idx]
-                self_norm2 = self.self_norms[self_norm_idx + 1]
-                self_norm_idx += 2
-                
-                normalized = self_norm1(model_embeddings)
-                self_attn_out, _ = self.self_attention_layers[i](
-                    normalized, normalized, normalized
-                )
-                model_embeddings = model_embeddings + self.dropout(self_attn_out)
-                
-                normalized = self_norm2(model_embeddings)
-                self_ff_out = self.self_ff[i](normalized)
-                model_embeddings = model_embeddings + self.dropout(self_ff_out)
+            normalized = cross_norm1(model_embeddings)
+            cross_attn_out, _ = self.cross_attention_layers[i](
+                normalized, normalized, normalized
+            )
+            model_embeddings = model_embeddings + self.dropout(cross_attn_out)
+            
+            normalized = cross_norm2(model_embeddings)
+            cross_ff_out = self.cross_ff[i](normalized)
+            model_embeddings = model_embeddings + self.dropout(cross_ff_out)
+            
+            # Self-attention
+            self_norm1 = self.self_norms[self_norm_idx]
+            self_norm2 = self.self_norms[self_norm_idx + 1]
+            self_norm_idx += 2
+            
+            normalized = self_norm1(model_embeddings)
+            self_attn_out, _ = self.self_attention_layers[i](
+                normalized, normalized, normalized
+            )
+            model_embeddings = model_embeddings + self.dropout(self_attn_out)
+            
+            normalized = self_norm2(model_embeddings)
+            self_ff_out = self.self_ff[i](normalized)
+            model_embeddings = model_embeddings + self.dropout(self_ff_out)
         
         # NEW: Learnable Gating (Switch Transformers 2021)
         if self.use_gating:
@@ -923,7 +825,8 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         result = {}
         
         if self.use_uncertainty and return_uncertainty:
-            logits, aleatoric, epistemic = self.uncertainty_estimator(aggregated_features)
+            # IMPROVED: Pass base model uncertainties to uncertainty estimator
+            logits, aleatoric, epistemic = self.uncertainty_estimator(aggregated_features, base_model_uncertainties)
             result = {
                 'logits': logits,
                 'aleatoric_uncertainty': aleatoric,
