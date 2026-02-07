@@ -567,23 +567,31 @@ def train_fusion_meta_learner(
             embed_dim = (embed_dim // num_heads) * num_heads
             print(f"Adjusted embed_dim to {embed_dim} to be divisible by num_heads={num_heads}")
         
-        # Use Enhanced Advanced Fusion with all post-2020 & post-2023 techniques
-        model = EnhancedAdvancedFusionMetaLearner(
-            input_dim=24,  # 8 features per model * 3 models
-            base_feature_dim=8,  # Features per model
+        # COMPLETE ARCHITECTURE REVAMP: Balanced Fusion 2025 (Publication-Ready)
+        # Based on latest 2024-2025 research for robust fusion with class imbalance
+        from src.ml_pipeline.balanced_fusion_2025 import BalancedFusionMetaLearner2025
+        
+        effective_dropout = min(dropout + 0.1, 0.5)
+        # Use balanced hidden dims (not too large, not too small)
+        balanced_hidden_dims = [256, 128, 64] if advanced_hidden_dims == [384, 192, 96, 48] else advanced_hidden_dims[:3]
+        
+        model = BalancedFusionMetaLearner2025(
+            input_dim=24,
+            base_feature_dim=8,
             embed_dim=embed_dim,
             num_heads=num_heads,
-            num_cross_attn_layers=num_layers,
-            hidden_dims=advanced_hidden_dims,
-            dropout=dropout,
-            use_gating=True,  # Learnable Gating (Switch Transformers 2021)
-            use_gnn=True,  # GNN for Model Relationships (Kaur et al. 2020)
-            use_uncertainty=True,  # Uncertainty-Aware (Ashukha et al. 2020)
-            use_interactive_fusion=True,  # Interactive Attention (Rahman et al. 2021)
-            # POST-2023 Techniques (2026 Publication)
-            use_domain_adversarial=True,  # Domain-Adversarial Training (PRADA, 2025)
-            use_self_distillation=True  # Self-Distillation at Layers (Feature Interaction, 2024)
+            num_layers=min(num_layers, 3),  # Cap at 3 for stability
+            hidden_dims=balanced_hidden_dims,
+            dropout=effective_dropout,
+            num_models=3
         ).to(device)
+        
+        print(f"  Using BALANCED FUSION 2025 Architecture (Publication-Ready)")
+        print(f"  - Balanced Multi-Head Attention (2024)")
+        print(f"  - Adaptive Class Weighting (2025)")
+        print(f"  - Temperature-Scaled Calibration (2024)")
+        print(f"  - Hierarchical Feature Fusion (2024)")
+        print(f"  - Dropout: {effective_dropout:.2f}")
         
         # IMPROVED: Better weight initialization for stability (2024 technique)
         def init_weights(m):
@@ -636,30 +644,46 @@ def train_fusion_meta_learner(
         # Standard: alpha = 1 - (class_count / total) for each class
         alpha_class_0 = class_counts[0] / total_samples if len(class_counts) > 0 else 0.5
         alpha_class_1 = class_counts[1] / total_samples if len(class_counts) > 1 else 0.5
-        # IMPROVED: Better Focal Loss parameters for class imbalance
-        # In Focal Loss, alpha should be higher for the minority class to balance
-        # For 65/35 split, use alpha = 0.65 (majority class proportion) to weight minority class more
-        # This means: alpha_t = 0.65 for class 1, alpha_t = 0.35 for class 0
-        focal_alpha = alpha_class_0  # Use majority class proportion (0.65) to weight minority class more
-        # Reduced gamma for more stable training (2.0 was too aggressive)
-        criterion = FocalLoss(alpha=focal_alpha, gamma=1.5, reduction='mean', label_smoothing=0.0)
-        print(f"  Focal Loss alpha: {focal_alpha:.4f} (class 0: {alpha_class_0:.4f}, class 1: {alpha_class_1:.4f}), gamma: 1.5")
+        # BALANCED LOSS FUNCTION (2025): Proper class imbalance handling
+        # Calculate balanced class weights (inverse frequency, normalized)
+        class_weights = torch.tensor([
+            1.0 / alpha_class_0,  # Weight for class 0 (majority)
+            1.0 / alpha_class_1   # Weight for class 1 (minority) - higher
+        ], dtype=torch.float32).to(device)
+        
+        # Normalize weights to prevent extreme values
+        class_weights = class_weights / class_weights.sum() * 2.0
+        
+        # Use Focal Loss with proper alpha (minority class gets higher weight)
+        # Alpha = minority class frequency to weight it MORE
+        focal_alpha = alpha_class_1  # 0.35 - weights class 1 more
+        criterion = FocalLoss(alpha=focal_alpha, gamma=2.0, reduction='mean', label_smoothing=0.0)
+        
+        # Weighted CrossEntropy as primary loss (more stable than Focal alone)
+        weighted_ce = nn.CrossEntropyLoss(weight=class_weights)
+        
+        print(f"  BALANCED LOSS (2025):")
+        print(f"  - Focal Loss: alpha={focal_alpha:.4f} (weights class 1), gamma=2.0")
+        print(f"  - Weighted CE: Class 0={class_weights[0]:.4f}, Class 1={class_weights[1]:.4f}")
+        print(f"  - Class distribution: Class 0={alpha_class_0:.4f}, Class 1={alpha_class_1:.4f}")
         
         # POST-2023: Self-Distillation Loss (Feature Interaction Fusion, 2024)
-        self_distill_loss = SelfDistillationLoss(temperature=4.0, alpha=0.5) if (use_advanced and model.use_self_distillation) else None
+        # Disabled for BalancedFusion2025 (doesn't support intermediate outputs)
+        has_self_distill = use_advanced and hasattr(model, 'use_self_distillation') and model.use_self_distillation
+        self_distill_loss = SelfDistillationLoss(temperature=4.0, alpha=0.5) if has_self_distill else None
         
         # POST-2023: Multi-Teacher Distillation (DistilQwen2.5, 2025)
         multi_teacher_distill = MultiTeacherDistillation(num_teachers=3, temperature=4.0) if use_advanced else None
         
         # POST-2023: Domain-Adversarial Loss (PRADA, 2025)
-        domain_criterion = nn.CrossEntropyLoss() if (use_advanced and model.use_domain_adversarial) else None
+        has_domain_adversarial = use_advanced and hasattr(model, 'use_domain_adversarial') and model.use_domain_adversarial
+        domain_criterion = nn.CrossEntropyLoss() if has_domain_adversarial else None
         
-        # POST-2024: Better optimizer settings - Reduced learning rate for stability
-        # Full LR (0.001) was causing instability and collapse
+        # POST-2024: Better optimizer settings - Increased regularization to prevent overfitting
         optimizer = optim.AdamW(
             model.parameters(), 
             lr=learning_rate * 0.7,  # Reduced to 0.0007 for more stable training
-            weight_decay=0.001,  # Standard weight decay
+            weight_decay=0.01,  # INCREASED weight decay to prevent overfitting (was 0.001)
             betas=(0.9, 0.999),
             eps=1e-8,
             amsgrad=False
@@ -684,18 +708,35 @@ def train_fusion_meta_learner(
         ema_model = None
         if use_advanced:
             # Create EMA model copy
-            ema_model = type(model)(
-                input_dim=24, base_feature_dim=8, embed_dim=embed_dim,
-                num_heads=num_heads, num_cross_attn_layers=num_layers,
-                hidden_dims=advanced_hidden_dims if use_advanced else hidden_dims,
-                dropout=dropout,
-                use_gating=True if use_advanced else False,
-                use_gnn=True if use_advanced else False,
-                use_uncertainty=True if use_advanced else False,
-                use_interactive_fusion=True if use_advanced else False,
-                use_domain_adversarial=True if use_advanced else False,
-                use_self_distillation=True if use_advanced else False
-            ).to(device)
+            # Check if using BalancedFusionMetaLearner2025 (different parameters)
+            # Use string check to avoid import issues
+            is_balanced_2025 = type(model).__name__ == 'BalancedFusionMetaLearner2025'
+            if is_balanced_2025:
+                # Use same parameters as the original model
+                ema_model = type(model)(
+                    input_dim=24,
+                    base_feature_dim=8,
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    num_layers=min(num_layers, 3),  # Same as original model
+                    hidden_dims=balanced_hidden_dims,  # Use balanced_hidden_dims, not advanced_hidden_dims
+                    dropout=effective_dropout,  # Use effective_dropout, not dropout
+                    num_models=3
+                ).to(device)
+            else:
+                # EnhancedAdvancedFusionMetaLearner parameters
+                ema_model = type(model)(
+                    input_dim=24, base_feature_dim=8, embed_dim=embed_dim,
+                    num_heads=num_heads, num_cross_attn_layers=num_layers,
+                    hidden_dims=advanced_hidden_dims if use_advanced else hidden_dims,
+                    dropout=dropout,
+                    use_gating=True if use_advanced else False,
+                    use_gnn=True if use_advanced else False,
+                    use_uncertainty=True if use_advanced else False,
+                    use_interactive_fusion=True if use_advanced else False,
+                    use_domain_adversarial=True if use_advanced else False,
+                    use_self_distillation=True if use_advanced else False
+                ).to(device)
             ema_model.load_state_dict(model.state_dict())
             ema_model.eval()
         
@@ -714,7 +755,7 @@ def train_fusion_meta_learner(
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
     
-    # Training loop
+    # Training loop - Initialize history OUTSIDE if/else so it's available for both
     history = {
         "train_loss": [],
         "train_acc": [],
@@ -733,7 +774,7 @@ def train_fusion_meta_learner(
     # Early stopping and best model tracking
     best_val_loss = float('inf')
     best_val_acc = 0.0
-    patience = 5 if use_advanced else 7  # REDUCED: Stop sooner to prevent collapse
+    patience = 7 if use_advanced else 10  # Increased slightly to allow model to learn
     patience_counter = 0
     best_model_state = None
     best_ema_state = None
@@ -760,9 +801,9 @@ def train_fusion_meta_learner(
             optimizer.zero_grad()
             
             # Enhanced model returns dict with logits (and optionally uncertainty, intermediate, domain)
-            return_intermediate = (use_advanced and model.use_self_distillation and teacher_model is not None)
-            return_domain = (use_advanced and model.use_domain_adversarial)
-            return_uncertainty = (use_advanced and model.use_uncertainty)
+            return_intermediate = (use_advanced and hasattr(model, 'use_self_distillation') and model.use_self_distillation and teacher_model is not None)
+            return_domain = (use_advanced and hasattr(model, 'use_domain_adversarial') and model.use_domain_adversarial)
+            return_uncertainty = (use_advanced and hasattr(model, 'use_uncertainty') and model.use_uncertainty)
             
             # IMPROVED: Extract base model uncertainties from feature vector
             # Uncertainties = 1 - confidence (higher = more uncertain)
@@ -785,8 +826,13 @@ def train_fusion_meta_learner(
                                 base_model_uncertainties=base_model_uncertainties)
             outputs = model_output['logits']
             
-            # Primary loss: Focal Loss
-            hard_loss = criterion(outputs, batch_labels)
+            # BALANCED LOSS (2025): Use weighted CE as primary, Focal as regularizer
+            # Weighted CE is more stable for class imbalance
+            weighted_ce_loss = weighted_ce(outputs, batch_labels)
+            focal_loss = criterion(outputs, batch_labels)
+            
+            # 80% Weighted CE (stable), 20% Focal Loss (handles hard examples)
+            hard_loss = 0.8 * weighted_ce_loss + 0.2 * focal_loss
             total_loss = hard_loss
             
             # POST-2023: Self-Distillation Loss (Feature Interaction Fusion, 2024)
@@ -873,8 +919,8 @@ def train_fusion_meta_learner(
                     total_loss = total_loss + 0.01 * domain_loss  # Reduced from 0.05 to 0.01 to avoid conflicts
             
             total_loss.backward()
-            # POST-2024: Gradient clipping for stability (increased from 0.5 to 1.0 for better learning)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # POST-2024: Gradient clipping for stability - REDUCED to prevent overfitting
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)  # Reduced from 1.0 to 0.5
             optimizer.step()
             
             # POST-2024: Update EMA model weights (Exponential Moving Average)
@@ -912,7 +958,7 @@ def train_fusion_meta_learner(
                 # Enhanced model returns dict with logits
                 # Extract base model uncertainties for validation (if using uncertainty)
                 base_model_uncertainties = None
-                if use_advanced and model.use_uncertainty:
+                if use_advanced and hasattr(model, 'use_uncertainty') and model.use_uncertainty:
                     email_conf = batch_features[:, 1]
                     whatsapp_conf = batch_features[:, 9]
                     voice_conf = batch_features[:, 17]
@@ -926,7 +972,10 @@ def train_fusion_meta_learner(
                                     base_model_uncertainties=base_model_uncertainties)
                 outputs = model_output['logits']
                 
-                loss = criterion(outputs, batch_labels)
+                # Use same balanced loss for validation
+                weighted_ce_loss = weighted_ce(outputs, batch_labels)
+                focal_loss = criterion(outputs, batch_labels)
+                loss = 0.8 * weighted_ce_loss + 0.2 * focal_loss
                 
                 val_loss += loss.item()
                 probs = F.softmax(outputs, dim=1)
@@ -1032,7 +1081,7 @@ def train_fusion_meta_learner(
         
         # POST-2023: Update teacher model for self-distillation (delayed to prevent early collapse)
         # Start at epoch 15 instead of 5 to allow model to stabilize first
-        if use_advanced and model.use_self_distillation and (epoch + 1) >= 15 and (epoch + 1) % 10 == 0:
+        if use_advanced and hasattr(model, 'use_self_distillation') and model.use_self_distillation and (epoch + 1) >= 15 and (epoch + 1) % 10 == 0:
             # Create a copy of current model as teacher
             if teacher_model is None:
                 teacher_model = EnhancedAdvancedFusionMetaLearner(
@@ -1152,7 +1201,7 @@ def train_fusion_meta_learner(
                 
                 # Extract base model uncertainties for validation (if using uncertainty)
                 base_model_uncertainties = None
-                if use_advanced and model_to_eval.use_uncertainty:
+                if use_advanced and hasattr(model_to_eval, 'use_uncertainty') and model_to_eval.use_uncertainty:
                     email_conf = batch_features[:, 1]
                     whatsapp_conf = batch_features[:, 9]
                     voice_conf = batch_features[:, 17]

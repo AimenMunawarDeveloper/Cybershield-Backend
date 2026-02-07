@@ -557,29 +557,29 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         self.use_domain_adversarial = use_domain_adversarial
         self.use_self_distillation = use_self_distillation
         
-        # Feature enrichment
+        # ULTRA-SIMPLIFIED Feature enrichment (2024: reduce overfitting)
+        # Single linear layer - minimal capacity to prevent overfitting
         self.feature_enricher = nn.Sequential(
             nn.Linear(base_feature_dim, embed_dim),
-            nn.BatchNorm1d(embed_dim),
+            nn.LayerNorm(embed_dim),  # LayerNorm instead of BatchNorm (more stable)
             nn.GELU(),
-            nn.Dropout(dropout * 0.5),
-            nn.Linear(embed_dim, embed_dim),
-            nn.BatchNorm1d(embed_dim),
-            nn.GELU()
+            nn.Dropout(dropout * 0.8)  # Even higher dropout
         )
         
         # Model-specific positional encodings
         self.model_positions = nn.Parameter(torch.randn(self.num_models, embed_dim))
         nn.init.xavier_uniform_(self.model_positions)
         
-        # Standard cross-attention and self-attention layers
+        # ULTRA-SIMPLIFIED: Use only 1 attention layer to prevent overfitting
+        # Research shows 1 layer is often enough for small datasets
+        effective_layers = min(num_cross_attn_layers, 1)  # Cap at 1 layer
         self.cross_attention_layers = nn.ModuleList([
-            nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
-            for _ in range(num_cross_attn_layers)
+            nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout * 1.5, batch_first=True)
+            for _ in range(effective_layers)
         ])
         self.self_attention_layers = nn.ModuleList([
-            nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
-            for _ in range(num_cross_attn_layers)
+            nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout * 1.5, batch_first=True)
+            for _ in range(effective_layers)
         ])
         
         # Layer norms
@@ -649,22 +649,29 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         else:
             aggregation_input_dim = embed_dim * self.num_models + embed_dim
         
+        # SIMPLIFIED Aggregation with higher dropout
         self.aggregation = nn.Sequential(
             nn.Linear(aggregation_input_dim, hidden_dims[0]),
             nn.BatchNorm1d(hidden_dims[0]),
             nn.GELU(),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout * 1.3)  # Increased dropout for regularization
         )
         
-        # Classification head (FIXED: Split into layers for intermediate access)
+        # Projection for simple average (60% simple + 40% complex aggregation)
+        self.simple_projection = nn.Linear(embed_dim, hidden_dims[0])
+        
+        # ULTRA-SIMPLIFIED Classification head (2024: single layer for small datasets)
+        # Use only 1 hidden layer to minimize overfitting
         prev_dim = hidden_dims[0]
         self.classifier_layers = nn.ModuleList()
-        for hidden_dim in hidden_dims[1:]:
+        # Use only first hidden dim (single layer)
+        simplified_hidden_dims = hidden_dims[1:2] if len(hidden_dims) > 1 else []  # Max 1 layer
+        for hidden_dim in simplified_hidden_dims:
             layer = nn.Sequential(
                 nn.Linear(prev_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
+                nn.LayerNorm(hidden_dim),  # LayerNorm more stable than BatchNorm
                 nn.GELU(),
-                nn.Dropout(dropout)
+                nn.Dropout(dropout * 1.5)  # Very high dropout
             )
             self.classifier_layers.append(layer)
             prev_dim = hidden_dim
@@ -694,9 +701,10 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         # POST-2023: Intermediate outputs for self-distillation
         # FIXED: One classifier per hidden layer (not including input aggregation layer)
         if use_self_distillation:
-            # One classifier for each hidden layer in classifier (hidden_dims[1:])
+            # One classifier for each hidden layer in classifier (simplified_hidden_dims)
+            simplified_hidden_dims = hidden_dims[1:min(3, len(hidden_dims))]
             self.intermediate_classifiers = nn.ModuleList([
-                nn.Linear(hidden_dims[i+1], 2) for i in range(len(hidden_dims)-1)
+                nn.Linear(simplified_hidden_dims[i], 2) for i in range(len(simplified_hidden_dims))
             ])
         
         self.dropout = nn.Dropout(dropout)
@@ -797,11 +805,19 @@ class EnhancedAdvancedFusionMetaLearner(nn.Module):
         )
         global_features = global_attn_out.squeeze(1)  # (batch, num_models * embed_dim)
         
-        # Combine interactive and global features
-        combined = torch.cat([interactive_features, global_features], dim=1)  # (batch, embed_dim + num_models * embed_dim)
+        # ULTRA-SIMPLIFIED Aggregation (2024: mostly simple average to prevent overfitting)
+        # Use 80% simple average, 20% complex features
+        simple_avg = model_embeddings.mean(dim=1)  # (batch, embed_dim)
         
-        # Aggregation through hidden layers (for intermediate classifiers)
-        aggregated_features = self.aggregation(combined)
+        # Complex features with regularization
+        combined = torch.cat([interactive_features, global_features], dim=1)  # (batch, embed_dim + num_models * embed_dim)
+        complex_features = self.aggregation(combined)  # (batch, hidden_dims[0])
+        
+        # Use weighted combination: 80% simple (projected), 20% complex (prevents overfitting)
+        simple_projected = self.simple_projection(simple_avg)  # (batch, hidden_dims[0])
+        
+        # Weighted combination - favor simple aggregation
+        aggregated_features = 0.8 * simple_projected + 0.2 * complex_features
         
         # FIXED: Progressive aggregation through hidden dims for intermediate classifiers
         intermediate_logits = []
