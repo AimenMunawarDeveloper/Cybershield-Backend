@@ -67,8 +67,9 @@ class PhishingDetectionPipeline:
               val_split: float = 0.2,
               batch_size: int = 32,
               epochs: int = 50,
-              learning_rate: float = 0.001,
-              use_adaptive_optimizer: bool = True,
+              learning_rate: float = 0.0003,
+              use_adaptive_optimizer: bool = False,
+              weight_decay: float = 0.0001,
               model_save_path: str = 'models/phishing_detector.pth',
               input_dim: Optional[int] = None) -> Dict[str, Any]:
         print("Preparing features...")
@@ -97,18 +98,23 @@ class PhishingDetectionPipeline:
         
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        classes = np.unique(y_train)
         print("Initializing model...")
         self.model = HybridPhishingDetector(
             input_dim=input_dim,
             sequence_length=1,
-            num_classes=len(np.unique(y_train))
+            num_classes=len(classes),
+            dropout=0.25,
         ).to(self.device)
         trainer = ModelTrainer(
             model=self.model,
             device=self.device,
-            optimizer_type='adam',
+            optimizer_type='adamw',
             learning_rate=learning_rate,
-            use_adaptive=use_adaptive_optimizer
+            weight_decay=weight_decay,
+            use_adaptive=use_adaptive_optimizer,
+            class_weight=None,
+            label_smoothing=0.0,
         )
         print("Starting training...")
         results = trainer.train(
@@ -116,7 +122,7 @@ class PhishingDetectionPipeline:
             val_loader=val_loader,
             epochs=epochs,
             save_path=model_save_path,
-            early_stopping_patience=10
+            early_stopping_patience=15
         )
         self.save_scaler_and_features(model_save_path.replace('.pth', '_scaler.pkl'))
         
