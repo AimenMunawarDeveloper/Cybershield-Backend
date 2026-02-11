@@ -12,6 +12,10 @@ pandas>=2.0.0
 # Utilities
 tqdm>=4.65.0
 
+# Visualization (for publication-quality plots)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
 # Optional: For better performance
 # torch-audio  # If needed for audio features
 # torchvision  # If needed for image features
