@@ -364,7 +364,8 @@ def train_email_ml(incidents: List[Dict[str, Any]], models_dir: Path) -> bool:
 
 
 def train_model(incidents: List[Dict[str, Any]], model_name: str, models_dir: Path, 
-                epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001) -> Dict[str, Any]:
+                epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001,
+                weight_decay: float = 0.0001) -> Dict[str, Any]:
     if len(incidents) == 0:
         print(f"\nWARNING: No {model_name} incidents to train on. Skipping...")
         return None
@@ -404,7 +405,8 @@ def train_model(incidents: List[Dict[str, Any]], model_name: str, models_dir: Pa
             batch_size=batch_size,
             epochs=epochs,
             learning_rate=learning_rate,
-            use_adaptive_optimizer=True,
+            use_adaptive_optimizer=False,
+            weight_decay=weight_decay,
             model_save_path=model_save_path
         )
         
@@ -438,9 +440,10 @@ def main():
     whatsapp_data_dir = data_dir / 'whatsapp'
     models_dir = base_dir / 'model_artifacts'
     models_dir.mkdir(parents=True, exist_ok=True)
-    epochs = 1
+    epochs = 25
     batch_size = 32
-    learning_rate = 0.001
+    learning_rate = 0.0003
+    weight_decay = 0.0001
     print("\n[Step 0/4] Preprocessing datasets...")
     preprocess_datasets(
         data_dir=data_dir,
@@ -492,7 +495,8 @@ def main():
             models_dir=models_dir,
             epochs=epochs,
             batch_size=batch_size,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            weight_decay=weight_decay
         )
     if whatsapp_incidents:
         print("\n" + "=" * 70)
@@ -509,7 +513,8 @@ def main():
             models_dir=models_dir,
             epochs=epochs,
             batch_size=batch_size,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            weight_decay=weight_decay
         )
     print("\n" + "=" * 70)
     print("TRAINING SUMMARY")
