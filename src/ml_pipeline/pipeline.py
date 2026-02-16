@@ -8,6 +8,7 @@ from .feature_extraction.multi_signal_extractor import MultiSignalFeatureExtract
 from .models.hybrid_model import HybridPhishingDetector
 from .training.trainer import ModelTrainer, PhishingDataset
 from .utils import to_float
+from .evaluation_metrics import calculate_all_metrics
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import warnings
@@ -125,6 +126,31 @@ class PhishingDetectionPipeline:
             early_stopping_patience=15
         )
         self.save_scaler_and_features(model_save_path.replace('.pth', '_scaler.pkl'))
+        
+        # Collect validation predictions and history for visualizations
+        self.model.eval()
+        all_preds = []
+        all_probs = []
+        with torch.no_grad():
+            for features, _ in val_loader:
+                features = features.to(self.device)
+                outputs = self.model(features)
+                probs = torch.softmax(outputs, dim=1)
+                all_preds.extend(torch.argmax(outputs, dim=1).cpu().numpy())
+                all_probs.extend(probs[:, 1].cpu().numpy())
+        y_true = y_val
+        y_pred = np.array(all_preds)
+        y_pred_probs = np.array(all_probs)
+        results['history'] = {
+            'train_loss': trainer.train_losses,
+            'val_loss': trainer.val_losses,
+            'train_acc': [m['accuracy'] for m in trainer.train_metrics],
+            'val_acc': [m['accuracy'] for m in trainer.val_metrics],
+        }
+        results['y_true'] = y_true
+        results['y_pred'] = y_pred
+        results['y_pred_probs'] = y_pred_probs
+        results['viz_metrics'] = calculate_all_metrics(y_true, y_pred, y_pred_probs, verbose=False)
         
         print("Training completed!")
         return results
