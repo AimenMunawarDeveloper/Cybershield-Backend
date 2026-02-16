@@ -19,6 +19,7 @@ from src.ml_pipeline.pipeline import PhishingDetectionPipeline
 from src.ml_pipeline.feature_extraction.multi_signal_extractor import MultiSignalFeatureExtractor
 from src.ml_pipeline.utils import to_float, structural_feature_keys
 from src.ml_pipeline.preprocess_datasets import preprocess_datasets
+from src.ml_pipeline.visualization import generate_all_visualizations
 
 
 def extract_urls(text: str) -> List[str]:
@@ -364,7 +365,8 @@ def train_email_ml(incidents: List[Dict[str, Any]], models_dir: Path) -> bool:
 
 
 def train_model(incidents: List[Dict[str, Any]], model_name: str, models_dir: Path, 
-                epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001) -> Dict[str, Any]:
+                epochs: int = 50, batch_size: int = 32, learning_rate: float = 0.001,
+                weight_decay: float = 0.0001) -> Dict[str, Any]:
     if len(incidents) == 0:
         print(f"\nWARNING: No {model_name} incidents to train on. Skipping...")
         return None
@@ -404,7 +406,8 @@ def train_model(incidents: List[Dict[str, Any]], model_name: str, models_dir: Pa
             batch_size=batch_size,
             epochs=epochs,
             learning_rate=learning_rate,
-            use_adaptive_optimizer=True,
+            use_adaptive_optimizer=False,
+            weight_decay=weight_decay,
             model_save_path=model_save_path
         )
         
@@ -417,6 +420,27 @@ def train_model(incidents: List[Dict[str, Any]], model_name: str, models_dir: Pa
         print(f"  - Validation Recall: {vm.get('recall', 0):.4f}")
         print(f"\n  Model saved to: {model_save_path}")
         print(f"  Scaler saved to: {model_save_path.replace('.pth', '_scaler.pkl')}")
+        
+        # Generate visualizations (same style as fusion model)
+        if results.get('history') and results.get('y_true') is not None:
+            try:
+                viz_dir = models_dir / model_name / "visualizations"
+                generate_all_visualizations(
+                    history=results['history'],
+                    y_true=results['y_true'],
+                    y_pred=results['y_pred'],
+                    y_pred_probs=results['y_pred_probs'],
+                    metrics=results['viz_metrics'],
+                    output_dir=viz_dir,
+                    lr_history=None,
+                    robustness_results=None,
+                    model_name=f"{model_name.capitalize()} Phishing Model",
+                )
+                print(f"  Visualizations saved to: {viz_dir}")
+            except Exception as viz_e:
+                print(f"  Warning: Visualizations failed: {viz_e}")
+                import traceback
+                traceback.print_exc()
         
         return results
         
@@ -438,9 +462,10 @@ def main():
     whatsapp_data_dir = data_dir / 'whatsapp'
     models_dir = base_dir / 'model_artifacts'
     models_dir.mkdir(parents=True, exist_ok=True)
-    epochs = 1
+    epochs = 25
     batch_size = 32
-    learning_rate = 0.001
+    learning_rate = 0.0003
+    weight_decay = 0.0001
     print("\n[Step 0/4] Preprocessing datasets...")
     preprocess_datasets(
         data_dir=data_dir,
@@ -492,7 +517,8 @@ def main():
             models_dir=models_dir,
             epochs=epochs,
             batch_size=batch_size,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            weight_decay=weight_decay
         )
     if whatsapp_incidents:
         print("\n" + "=" * 70)
@@ -509,7 +535,8 @@ def main():
             models_dir=models_dir,
             epochs=epochs,
             batch_size=batch_size,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            weight_decay=weight_decay
         )
     print("\n" + "=" * 70)
     print("TRAINING SUMMARY")

@@ -82,10 +82,12 @@ class ModelTrainer:
     def __init__(self,
                  model: nn.Module,
                  device: torch.device,
-                 optimizer_type: str = 'adam',
-                 learning_rate: float = 0.001,
+                 optimizer_type: str = 'adamw',
+                 learning_rate: float = 0.0003,
                  weight_decay: float = 0.0001,
-                 use_adaptive: bool = True):
+                 use_adaptive: bool = False,
+                 class_weight: Optional[torch.Tensor] = None,
+                 label_smoothing: float = 0.0):
         self.model = model.to(device)
         self.device = device
         
@@ -94,17 +96,21 @@ class ModelTrainer:
             self.optimizer = self.optimizer_wrapper.optimizer
         else:
             self.optimizer_wrapper = None
-            if optimizer_type == 'adam':
-                self.optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-            elif optimizer_type == 'adamw':
+            if optimizer_type == 'adamw':
                 self.optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+            elif optimizer_type == 'adam':
+                self.optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
             else:
                 self.optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         
-        self.criterion = nn.CrossEntropyLoss()
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=3
+        self.criterion = nn.CrossEntropyLoss(
+            weight=class_weight.to(device) if class_weight is not None else None,
+            label_smoothing=label_smoothing,
         )
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6
+        )
+        self.grad_clip_max_norm = 1.0
         
         self.train_losses = []
         self.val_losses = []
@@ -125,11 +131,13 @@ class ModelTrainer:
             if self.optimizer_wrapper:
                 self.optimizer_wrapper.zero_grad()
                 self.optimizer_wrapper.backward(loss)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_max_norm)
                 self.optimizer_wrapper.step_optimizer()
                 self.optimizer_wrapper.step(loss.item())
             else:
                 self.optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_max_norm)
                 self.optimizer.step()
             
             total_loss += loss.item()

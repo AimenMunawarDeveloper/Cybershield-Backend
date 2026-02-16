@@ -8,6 +8,7 @@ from .feature_extraction.multi_signal_extractor import MultiSignalFeatureExtract
 from .models.hybrid_model import HybridPhishingDetector
 from .training.trainer import ModelTrainer, PhishingDataset
 from .utils import to_float
+from .evaluation_metrics import calculate_all_metrics
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import warnings
@@ -67,8 +68,9 @@ class PhishingDetectionPipeline:
               val_split: float = 0.2,
               batch_size: int = 32,
               epochs: int = 50,
-              learning_rate: float = 0.001,
-              use_adaptive_optimizer: bool = True,
+              learning_rate: float = 0.0003,
+              use_adaptive_optimizer: bool = False,
+              weight_decay: float = 0.0001,
               model_save_path: str = 'models/phishing_detector.pth',
               input_dim: Optional[int] = None) -> Dict[str, Any]:
         print("Preparing features...")
@@ -97,18 +99,23 @@ class PhishingDetectionPipeline:
         
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        classes = np.unique(y_train)
         print("Initializing model...")
         self.model = HybridPhishingDetector(
             input_dim=input_dim,
             sequence_length=1,
-            num_classes=len(np.unique(y_train))
+            num_classes=len(classes),
+            dropout=0.25,
         ).to(self.device)
         trainer = ModelTrainer(
             model=self.model,
             device=self.device,
-            optimizer_type='adam',
+            optimizer_type='adamw',
             learning_rate=learning_rate,
-            use_adaptive=use_adaptive_optimizer
+            weight_decay=weight_decay,
+            use_adaptive=use_adaptive_optimizer,
+            class_weight=None,
+            label_smoothing=0.0,
         )
         print("Starting training...")
         results = trainer.train(
@@ -116,9 +123,34 @@ class PhishingDetectionPipeline:
             val_loader=val_loader,
             epochs=epochs,
             save_path=model_save_path,
-            early_stopping_patience=10
+            early_stopping_patience=15
         )
         self.save_scaler_and_features(model_save_path.replace('.pth', '_scaler.pkl'))
+        
+        # Collect validation predictions and history for visualizations
+        self.model.eval()
+        all_preds = []
+        all_probs = []
+        with torch.no_grad():
+            for features, _ in val_loader:
+                features = features.to(self.device)
+                outputs = self.model(features)
+                probs = torch.softmax(outputs, dim=1)
+                all_preds.extend(torch.argmax(outputs, dim=1).cpu().numpy())
+                all_probs.extend(probs[:, 1].cpu().numpy())
+        y_true = y_val
+        y_pred = np.array(all_preds)
+        y_pred_probs = np.array(all_probs)
+        results['history'] = {
+            'train_loss': trainer.train_losses,
+            'val_loss': trainer.val_losses,
+            'train_acc': [m['accuracy'] for m in trainer.train_metrics],
+            'val_acc': [m['accuracy'] for m in trainer.val_metrics],
+        }
+        results['y_true'] = y_true
+        results['y_pred'] = y_pred
+        results['y_pred_probs'] = y_pred_probs
+        results['viz_metrics'] = calculate_all_metrics(y_true, y_pred, y_pred_probs, verbose=False)
         
         print("Training completed!")
         return results

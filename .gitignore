@@ -163,3 +163,16 @@ __pycache__/
 *.pt
 *.ckpt
 *.safetensors
+
+# Generated visual files (plots, figures from training/scripts)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+
+# Generated JSON (metrics, history, metadata) – only in artifact dirs; keeps package.json etc.
+src/ml_pipeline/model_artifacts/**/*.json
+**/visualizations/**/*.json
+src/services/mlPhishingService/models/*.json
