@@ -213,37 +213,6 @@ Amazon Customer Service`
 
   /*
    * PHISHING INDICATORS:
-   * 1. Fake URL: "apple-icloud.net" (.net instead of apple.com)
-   * 2. Storage full creates urgency
-   * 3. Threatens data loss
-   * 4. Free storage offer is bait
-   * 5. Login through external link
-   */
-  {
-    title: "Apple iCloud Storage",
-    description: "Simulate Apple iCloud storage alerts for tech phishing awareness.",
-    image: "https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
-    category: "Cloud Storage",
-    emailTemplate: {
-      subject: "⚠️ Your iCloud storage is almost full",
-      bodyContent: `Dear Apple Customer,
-
-Your iCloud storage is 95% full. You may not be able to back up your devices or sync your data.
-
-Current Usage: 4.75 GB of 5 GB
-
-To avoid losing your photos, documents, and backups, please upgrade your storage:
-
-https://apple-icloud.net/upgrade-storage
-
-As a valued customer, get 50GB FREE for the first month!
-
-Apple Support`
-    }
-  },
-
-  /*
-   * PHISHING INDICATORS:
    * 1. Fake URL: "google-security-alert.com" (not official google.com)
    * 2. Password change notification creates panic
    * 3. "Wasn't you?" link is the phishing vector

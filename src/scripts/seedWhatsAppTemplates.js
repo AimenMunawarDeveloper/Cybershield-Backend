@@ -149,28 +149,6 @@ Having issues? Update address here.`
 
   /*
    * PHISHING INDICATORS:
-   * 1. Fake URL: "apple-icloud.net" (.net instead of apple.com)
-   * 2. Storage full creates urgency
-   * 3. Free storage offer is bait
-   * 4. Threatens data loss
-   */
-  {
-    title: "iCloud Storage Full",
-    description: "Simulate Apple iCloud storage alerts.",
-    image: "https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
-    category: "Cloud Storage",
-    messageTemplate: `⚠️ iCloud
-
-Your storage is 95% full!
-
-Get 50GB FREE:
-apple-icloud.net/upgrade
-
-Don't lose your photos and backups!`
-  },
-
-  /*
-   * PHISHING INDICATORS:
    * 1. Fake URL: "google-security-alert.com" (not google.com)
    * 2. New sign-in creates panic
    * 3. "Wasn't you?" is phishing link
@@ -517,29 +495,6 @@ zong-bundles-offer.pk/50gb
 Dial *567# or click link!
 
 - Zong Pakistan`
-  },
-
-  /*
-   * PHISHING INDICATORS:
-   * 1. Misspelled word: "ballance"
-   * 2. Fake URL: "ufone-secure-cancel.pk" (not official ufone.com)
-   * 3. Claims someone requested transfer - creates panic
-   * 4. Asks to click link to cancel - unusual process
-   * 5. Balance transfer requests don't work this way
-   */
-  {
-    title: "Ufone Balance Transfer",
-    description: "Simulate Ufone balance transfer requests for telecom phishing.",
-    image: "https://images.unsplash.com/photo-1556656793-08538906a9f8?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
-    category: "Telecom",
-    messageTemplate: `Ufone Alert
-
-Someone requested Rs. 500 ballance transfer from your account.
-
-If not you, CANCEL now:
-ufone-secure-cancel.pk/block
-
-Or dial *210# to block.`
   },
 
   // ==================== EMPLOYMENT - PAKISTANI ====================
