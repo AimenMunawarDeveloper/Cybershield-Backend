@@ -2,6 +2,9 @@ const mongoose = require("mongoose");
 const WhatsAppTemplate = require("../models/WhatsAppTemplate");
 require("dotenv").config();
 
+// Landing base: deployed URL (https://www-website.vercel.app/login/). Links go directly to e.g. .../login/amazon.
+const LANDING_BASE = process.env.LANDING_PAGES_BASE_URL || "https://www-website.vercel.app";
+
 const templates = [
   // ==================== INTERNATIONAL TEMPLATES ====================
 
@@ -18,15 +21,15 @@ const templates = [
     description: "Simulate Microsoft account security alerts via WhatsApp.",
     image: "https://images.unsplash.com/photo-1633419461186-7d40a38105ec?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80",
     category: "IT Support",
-    messageTemplate: `⚠️ Microsoft Security Alert
+    messageTemplate: `Microsoft Security
 
-Unusual sign-in detected on your account from unknown device.
+Sign-in from an unknown device was detected on your acount.
 
 Location: Unknown
 Time: 3:42 AM
 
-Verify now to prevent account lock:
-microsoft-secure.com/verify
+Confirm it was you or secure your account:
+${LANDING_BASE}/login/mircosoft
 
 - Microsoft Team`
   },
@@ -52,7 +55,7 @@ microsoft-secure.com/verify
 - [Hidden - Login to see]
 
 See who's interested:
-linkedln-security.com/views`
+${LANDING_BASE}/login/linkdin`
   },
 
   /*
@@ -73,7 +76,7 @@ Someone shared a file with you:
 "Important_Document.pdf"
 
 View file:
-dropbox-share.net/view
+${LANDING_BASE}/login/dropbx
 
 Link expires in 24 hours.`
   },
@@ -95,7 +98,7 @@ Link expires in 24 hours.`
 Your account has been limited due to suspicious activity.
 
 Verify your identity:
-paypa1-secure.com/verify
+${LANDING_BASE}/login/paypa1
 
 Action required within 24 hours.
 
@@ -119,7 +122,7 @@ Action required within 24 hours.
 Payment failed for your subscription.
 
 Update payment method to avoid service interruption:
-netflix-billing.com/update
+${LANDING_BASE}/login/netflx
 
 Amount due: $15.99`
   },
@@ -140,7 +143,7 @@ Amount due: $15.99`
 
 Your package is out for delivery!
 
-Track: amazn-delivery.com/track
+Track: ${LANDING_BASE}/login/amazn
 
 Delivery by 9 PM today.
 
@@ -167,7 +170,7 @@ Device: Windows PC
 Location: Unknown
 
 Wasn't you? Secure account:
-google-security-alert.com/secure`
+${LANDING_BASE}/login/gogle`
   },
 
   /*
@@ -187,7 +190,7 @@ google-security-alert.com/secure`
 Your package is held at customs.
 
 Pay $25 fee to release:
-dhl-tracking.net/customs
+${LANDING_BASE}/login/dhl
 
 Returns in 5 days if unpaid.`
   },
@@ -212,7 +215,7 @@ Location: Moscow, Russia
 Time: 4:15 AM
 
 Not you? Secure now:
-faceb00k-security.com/secure`
+${LANDING_BASE}/login/faceb00k`
   },
 
   // ==================== BANKING/FINANCIAL - PAKISTANI ====================
@@ -235,7 +238,7 @@ faceb00k-security.com/secure`
 Your HBL account will be blocked within 24 hours due to incomplte verification.
 
 Verify now to avoid suspention:
-hbl-securty-pk.com/verfiy
+${LANDING_BASE}/login/hbl
 
 Helpline: 111-111-425
 - HBL Digital Banking`
@@ -261,7 +264,7 @@ Amount: Rs. 45,000
 Location: Karachi
 
 Not you? Block card immediatly:
-meezan-secure-banking.pk/block
+${LANDING_BASE}/login/meezan-bank
 
 Call: 0800-00-786`
   },
@@ -284,7 +287,7 @@ Call: 0800-00-786`
 Your account is SUSPENDED due to CNIC verificaton pending.
 
 Restore access now:
-jazz-cash-verfiy.pk/restore
+${LANDING_BASE}/login/jazzcash
 
 Ballance will be forfeited in 48 hours!
 
@@ -309,7 +312,7 @@ Dial *786# for help`
 Mubarak! You've won Rs. 25,000 in Khushiyon Ki Barsaat Lucky Draw!
 
 Claim prize now:
-easypaisa-rewards-pk.net/claim
+${LANDING_BASE}/login/easypaisa
 
 Send CNIC copy to: 0345-XXXXXXX
 Proccessing fee: Rs. 500`
@@ -333,7 +336,7 @@ Proccessing fee: Rs. 500`
 Your Debit Card ending 4521 has been BLOCKED due to suspicous activity.
 
 Unblock immediatly:
-ubl-cards-securty.com/unblock
+${LANDING_BASE}/login/ubl
 
 Enter card CVV and PIN to verify.
 
@@ -361,7 +364,7 @@ Delivery Failed!
 Order: DPK-45892176
 
 Address incomplte. Update now:
-daraz-logistics-support.com/update
+${LANDING_BASE}/login/daraz
 
 Re-delivery fee: Rs. 149
 
@@ -387,7 +390,7 @@ Your parcel is held at customs!
 CN#: TCS-PK-78456123
 
 Pay Rs. 2,500 duty to release:
-tcs-customs-clearence.pk/pay
+${LANDING_BASE}/login/tcs
 
 Returns to sender in 7 days!
 Call: 021-111-123-456`
@@ -413,7 +416,7 @@ CN#: LEO-2024-567890
 Amount: Rs. 3,450
 
 Confirm payement:
-leopards-courier-cod.net/pay
+${LANDING_BASE}/login/leopards
 
 Returning after 3 failed attemps!`
   },
@@ -438,7 +441,7 @@ Returning after 3 failed attemps!`
 Get 10GB FREE + 5000 Minutes!
 
 Activate now:
-jazz-rewards-offer.pk/free
+${LANDING_BASE}/login/jazz
 
 Enter Jazz number & verify OTP.
 Activaton fee: Rs. 50
@@ -466,7 +469,7 @@ Your SIM will be BLOCKED in 48 hours!
 Biometric verificaton required as per PTA requirment.
 
 Verify online:
-telenor-pta-verify.net/biometric
+${LANDING_BASE}/login/telenor
 
 Upload CNIC + Selfie
 Call 345 for help`
@@ -490,7 +493,7 @@ Call 345 for help`
 Exclusive: 50GB for just Rs. 100!
 
 Limited time offer. Subscribe:
-zong-bundles-offer.pk/50gb
+${LANDING_BASE}/login/zong
 
 Dial *567# or click link!
 
@@ -521,7 +524,7 @@ Salary: Rs. 85,000-120,000
 Pay Rs. 2,500 registeration fee:
 JazzCash: 0301-XXXXXXX
 
-Complete form: ptcl-careers-apply.pk/register`
+Complete form: ${LANDING_BASE}/login/ptcl`
   },
 
   /*
@@ -542,7 +545,7 @@ Complete form: ptcl-careers-apply.pk/register`
 Earn Rs. 80,000+/month as Captain!
 
 Register now - Limited slots!
-careem-captain-join.pk/apply
+${LANDING_BASE}/login/careem
 
 Fee: Rs. 1,500 (one-time)
 JazzCash: 0333-XXXXXXX
@@ -569,7 +572,7 @@ Become a Rider! Earn Rs. 50,000+/month
 
 No experiance needed!
 Bike owners apply:
-foodpanda-riders-pk.net/apply
+${LANDING_BASE}/login/foodpanda
 
 Registeration: Rs. 1,000
 Easypaisa: 0345-XXXXXXX`
@@ -597,7 +600,7 @@ Mubarak! You won Rs. 100,000!
 Ticket: JP-2024-78456
 
 Claim within 72 hours:
-jeeto-pakistan-winner.pk/claim
+${LANDING_BASE}/login/jeeto-pakistan
 
 Proccessing fee: Rs. 2,000
 JazzCash: 0300-XXXXXXX`
@@ -621,7 +624,7 @@ JazzCash: 0300-XXXXXXX`
 Your bond #456789 won Rs. 750,000!
 
 Claim your prize:
-national-savings-prizebond.pk/claim
+${LANDING_BASE}/login/prize-bonds
 
 Fee: Rs. 5,000
 Send CNIC copy to confirm.
@@ -650,7 +653,7 @@ Send CNIC + JazzCash number to claim:
 0345-9876543
 
 Or click:
-jazz-winners-claim.pk/prize
+${LANDING_BASE}/login/jazz
 
 Limited time only!`
   },
@@ -675,7 +678,7 @@ Limited time only!`
 Rs. 500 voucher expiring TONIGHT!
 
 Claim Rs. 300 BONUS:
-foodpanda-vouchers-pk.net/claim
+${LANDING_BASE}/login/foodpanda
 
 Login to get FREE food!
 
@@ -702,7 +705,7 @@ Don't miss out - limited offer!`
 Buyer paid Rs. 285,000 for your iPhone!
 
 Release funds:
-olx-payments-verify.pk/release
+${LANDING_BASE}/login/olx
 
 Verificaton fee: Rs. 500
 
@@ -728,7 +731,7 @@ iPhone 15 at Rs. 50,000 ONLY!
 Stock: 3 left!
 
 Buy now before its gone:
-daraz-flash-deals.pk/iphone15
+${LANDING_BASE}/login/daraz
 
 Pay via JazzCash for extra 10% off!`
   },
@@ -755,7 +758,7 @@ DISCONNECTION in 24 hours!
 Outstanding: Rs. 15,780
 
 Pay now to avoid:
-ke-bills-payment.pk/pay
+${LANDING_BASE}/login/ke
 
 Reconection fee: Rs. 2,500
 
@@ -783,7 +786,7 @@ Overdue: Rs. 8,450
 Consumer#: 12345678
 
 Pay immediatly:
-ssgc-bills-online.pk/pay
+${LANDING_BASE}/login/ssgc
 
 Call 1199 for help`
   },
@@ -811,7 +814,7 @@ Location: Unknown
 Time: 3:15 AM
 
 Secure account NOW:
-email-secure-verify.com/protect
+${LANDING_BASE}/login/gogle
 
 Ignore = Data theft risk!`
   },
@@ -836,7 +839,7 @@ Someone is trying to registar your number on another device!
 If this wasn't you, your account may be comprimised.
 
 Verify identity:
-whatsapp-verify-secure.pk/check
+${LANDING_BASE}/login/whatsapp
 
 Do NOT share your code with anyone!`
   },

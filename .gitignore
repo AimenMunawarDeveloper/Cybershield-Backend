@@ -176,3 +176,5 @@ __pycache__/
 src/ml_pipeline/model_artifacts/**/*.json
 **/visualizations/**/*.json
 src/services/mlPhishingService/models/*.json
+
+mongodb-backup/
