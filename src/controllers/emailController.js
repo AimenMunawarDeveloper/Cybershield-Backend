@@ -72,6 +72,12 @@ const sendEmail = async (req, res) => {
       emailHtml = emailHtml.replace(/\n/g, "<br>");
       emailHtml = `<html><body style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.6;">${emailHtml}</body></html>`;
     }
+    const learningDisclaimer = '<p style="font-size:9px;color:#888;margin-top:24px;">For learning purposes only.</p>';
+    if (emailHtml.includes("</body>")) {
+      emailHtml = emailHtml.replace("</body>", learningDisclaimer + "</body>");
+    } else {
+      emailHtml = emailHtml + learningDisclaimer;
+    }
 
     // Send emails to all recipients sequentially
     const results = {
