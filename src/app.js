@@ -16,6 +16,7 @@ const voicePhishingTemplateRoutes = require("./routes/voicePhishingTemplates");
 const campaignRoutes = require("./routes/campaigns");
 const incidentRoutes = require("./routes/incidents");
 const chatRoutes = require("./routes/chat");
+const courseRoutes = require("./routes/courses");
 
 const app = express();
 
@@ -56,6 +57,7 @@ app.use("/api/voice-phishing-templates", voicePhishingTemplateRoutes);
 app.use("/api/campaigns", campaignRoutes);
 app.use("/api/incidents", incidentRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/courses", courseRoutes);
 
 // 404 handler
 app.use((req, res) => {
