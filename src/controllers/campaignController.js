@@ -5,6 +5,7 @@ const WhatsAppCampaign = require("../models/WhatsAppCampaign");
 const Email = require("../models/Email");
 const twilioService = require("../services/twilioService");
 const nodemailerService = require("../services/nodemailerService");
+const { formatEmailForSending } = require("../services/emailFormatter");
 
 // Campaign scheduler - checks every minute for scheduled campaigns
 const startCampaignScheduler = () => {

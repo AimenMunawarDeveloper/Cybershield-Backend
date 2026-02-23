@@ -1,4 +1,5 @@
 const nodemailerService = require("../services/nodemailerService");
+const { formatEmailForSending } = require("../services/emailFormatter");
 const Email = require("../models/Email");
 
 // Helper function to validate email format
@@ -56,13 +57,13 @@ const sendEmail = async (req, res) => {
       });
     }
     
-    const smtpUser = process.env.SMTP_USER; 
-    const smtpPassword = process.env.SMTP_PASSWORD;
+    const smtpUser = process.env.SMTP_USER;
+    const smtpAuth = process.env.SMTP_KEY || process.env.SMTP_PASSWORD;
 
-    if (!smtpUser || !smtpPassword) {
+    if (!smtpUser || !smtpAuth) {
       return res.status(500).json({
         success: false,
-        message: "SMTP configuration missing. Please set SMTP_USER and SMTP_PASSWORD in .env file",
+        message: "SMTP configuration missing. Please set SMTP_USER and SMTP_KEY (or SMTP_PASSWORD) in .env file",
       });
     }
 
@@ -98,9 +99,8 @@ const sendEmail = async (req, res) => {
 
     const result = await nodemailerService.sendEmail({
           to: recipientEmail,
-      from: sentBy,
           subject: subject,
-      html: emailHtml,
+          html: emailHtml,
     });
 
         // Save email to database
