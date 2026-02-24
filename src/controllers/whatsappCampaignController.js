@@ -433,13 +433,16 @@ const handleTwilioWebhook = async (req, res) => {
   try {
     const toDigits = normalizePhoneForMatch(To || "");
 
-    // Find campaign with this message (match by recipient phone, normalized)
-    const campaigns = await WhatsAppCampaign.find({ "targetUsers.status": "sent" });
+    // Find campaign with this message (match by recipient phone).
+    // Match targets with status "sent" OR "delivered" so we can apply delivered first, then read when Twilio sends both.
+    const campaigns = await WhatsAppCampaign.find({
+      "targetUsers.status": { $in: ["sent", "delivered"] },
+    });
     let campaign = null;
     let target = null;
     for (const c of campaigns) {
       const t = c.targetUsers.find(
-        (x) => x.status === "sent" && normalizePhoneForMatch(x.phoneNumber) === toDigits
+        (x) => (x.status === "sent" || x.status === "delivered") && normalizePhoneForMatch(x.phoneNumber) === toDigits
       );
       if (t) {
         campaign = c;
@@ -449,30 +452,40 @@ const handleTwilioWebhook = async (req, res) => {
     }
 
     if (!campaign || !target) {
-      console.log("[Twilio Webhook] No matching campaign/target for To digits:", toDigits, "campaigns checked:", campaigns.length);
+      console.log("[Twilio Webhook] No matching campaign/target for To digits:", toDigits);
     } else {
-      console.log("[Twilio Webhook] Matched campaign:", campaign._id, "target phone (digits):", toDigits, "updating status to:", MessageStatus);
+      console.log("[Twilio Webhook] Matched campaign:", campaign._id, "target phone (digits):", toDigits, "current status:", target.status, "updating to:", MessageStatus);
+      let didUpdate = false;
       switch (MessageStatus) {
         case "delivered":
-          target.status = "delivered";
-          target.deliveredAt = new Date();
-          campaign.stats.totalDelivered += 1;
+          if (target.status === "sent") {
+            target.status = "delivered";
+            target.deliveredAt = new Date();
+            campaign.stats.totalDelivered += 1;
+            didUpdate = true;
+          }
           break;
         case "read":
-          target.status = "read";
-          target.readAt = new Date();
-          campaign.stats.totalRead += 1;
+          if (target.status !== "read") {
+            target.status = "read";
+            target.readAt = new Date();
+            campaign.stats.totalRead += 1;
+            didUpdate = true;
+          }
           break;
         case "failed":
           target.status = "failed";
           target.failureReason = body.ErrorMessage;
           campaign.stats.totalFailed += 1;
+          didUpdate = true;
           break;
         default:
           console.log("[Twilio Webhook] Unhandled MessageStatus:", MessageStatus);
       }
-      await campaign.save();
-      console.log("[Twilio Webhook] Saved. Stats now - delivered:", campaign.stats.totalDelivered, "read:", campaign.stats.totalRead);
+      if (didUpdate) {
+        await campaign.save();
+        console.log("[Twilio Webhook] Saved. Stats now - delivered:", campaign.stats.totalDelivered, "read:", campaign.stats.totalRead);
+      }
     }
 
     res.status(200).send("OK");
