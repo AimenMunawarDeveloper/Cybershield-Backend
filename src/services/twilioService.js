@@ -9,6 +9,16 @@ class TwilioService {
     this.whatsAppNumber =
       process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886";
   }
+  getStatusCallbackUrl() {
+    // Twilio will POST message status (delivered, read, failed) to this URL.
+    // Set TWILIO_STATUS_CALLBACK_URL to your public backend URL + path, e.g. https://api.yourapp.com/api/whatsapp-campaigns/webhook
+    const url = process.env.TWILIO_STATUS_CALLBACK_URL;
+    if (url) return url;
+    const base = process.env.BACKEND_PUBLIC_URL;
+    if (base) return `${base.replace(/\/$/, "")}/api/whatsapp-campaigns/webhook`;
+    return null;
+  }
+
   async sendWhatsAppMessage(to, message, mediaUrl = null) {
     try {
       const formattedTo = this.formatPhoneNumber(to);
@@ -19,6 +29,10 @@ class TwilioService {
       };
       if (mediaUrl) {
         messageOptions.mediaUrl = [mediaUrl];
+      }
+      const statusCallback = this.getStatusCallbackUrl();
+      if (statusCallback) {
+        messageOptions.statusCallback = statusCallback;
       }
       const messageResponse = await this.client.messages.create(messageOptions);
       return {

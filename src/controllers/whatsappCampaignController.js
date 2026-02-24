@@ -404,46 +404,48 @@ const getCampaignAnalytics = async (req, res) => {
     });
   }
 };
+// Normalize phone for matching: digits only (Twilio sends e.g. whatsapp:+923001234567)
+const normalizePhone = (phone) => (phone || "").replace(/\D/g, "");
+
 const handleTwilioWebhook = async (req, res) => {
   try {
     const { MessageSid, MessageStatus, To, From } = req.body;
+    const toDigits = normalizePhone(To || "");
 
-    // Find campaign with this message
-    const campaign = await WhatsAppCampaign.findOne({
-      targetUsers: {
-        $elemMatch: {
-          phoneNumber: { $regex: To.replace("whatsapp:", "") },
-          status: "sent",
-        },
-      },
-    });
-
-    if (campaign) {
-      const target = campaign.targetUsers.find((t) =>
-        t.phoneNumber.includes(To.replace("whatsapp:", ""))
+    // Find campaign with this message (match by recipient phone, digits-only)
+    const campaigns = await WhatsAppCampaign.find({ "targetUsers.status": "sent" });
+    let campaign = null;
+    let target = null;
+    for (const c of campaigns) {
+      const t = c.targetUsers.find(
+        (x) => x.status === "sent" && normalizePhone(x.phoneNumber) === toDigits
       );
-
-      if (target) {
-        switch (MessageStatus) {
-          case "delivered":
-            target.status = "delivered";
-            target.deliveredAt = new Date();
-            campaign.stats.totalDelivered += 1;
-            break;
-          case "read":
-            target.status = "read";
-            target.readAt = new Date();
-            campaign.stats.totalRead += 1;
-            break;
-          case "failed":
-            target.status = "failed";
-            target.failureReason = req.body.ErrorMessage;
-            campaign.stats.totalFailed += 1;
-            break;
-        }
-
-        await campaign.save();
+      if (t) {
+        campaign = c;
+        target = t;
+        break;
       }
+    }
+
+    if (campaign && target) {
+      switch (MessageStatus) {
+        case "delivered":
+          target.status = "delivered";
+          target.deliveredAt = new Date();
+          campaign.stats.totalDelivered += 1;
+          break;
+        case "read":
+          target.status = "read";
+          target.readAt = new Date();
+          campaign.stats.totalRead += 1;
+          break;
+        case "failed":
+          target.status = "failed";
+          target.failureReason = req.body.ErrorMessage;
+          campaign.stats.totalFailed += 1;
+          break;
+      }
+      await campaign.save();
     }
 
     res.status(200).send("OK");
