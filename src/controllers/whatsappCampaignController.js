@@ -404,8 +404,16 @@ const getCampaignAnalytics = async (req, res) => {
     });
   }
 };
-// Normalize phone for matching: digits only (Twilio sends e.g. whatsapp:+923001234567)
-const normalizePhone = (phone) => (phone || "").replace(/\D/g, "");
+// Normalize phone for matching so Twilio "923337335588" matches stored "03337335588"
+const normalizePhoneForMatch = (phone) => {
+  const digits = (phone || "").replace(/\D/g, "");
+  // Pakistan: 0XXXXXXXXXX (11 digits) => 92XXXXXXXXXX so it matches Twilio's To
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return "92" + digits.substring(1);
+  }
+  // Already 92... or other country code
+  return digits;
+};
 
 const handleTwilioWebhook = async (req, res) => {
   // Log every webhook request (visible in Vercel Functions logs)
@@ -423,15 +431,15 @@ const handleTwilioWebhook = async (req, res) => {
   });
 
   try {
-    const toDigits = normalizePhone(To || "");
+    const toDigits = normalizePhoneForMatch(To || "");
 
-    // Find campaign with this message (match by recipient phone, digits-only)
+    // Find campaign with this message (match by recipient phone, normalized)
     const campaigns = await WhatsAppCampaign.find({ "targetUsers.status": "sent" });
     let campaign = null;
     let target = null;
     for (const c of campaigns) {
       const t = c.targetUsers.find(
-        (x) => x.status === "sent" && normalizePhone(x.phoneNumber) === toDigits
+        (x) => x.status === "sent" && normalizePhoneForMatch(x.phoneNumber) === toDigits
       );
       if (t) {
         campaign = c;
