@@ -408,8 +408,21 @@ const getCampaignAnalytics = async (req, res) => {
 const normalizePhone = (phone) => (phone || "").replace(/\D/g, "");
 
 const handleTwilioWebhook = async (req, res) => {
+  // Log every webhook request (visible in Vercel Functions logs)
+  const body = req.body || {};
+  const MessageSid = body.MessageSid;
+  const MessageStatus = body.MessageStatus;
+  const To = body.To;
+  const From = body.From;
+  console.log("[Twilio Webhook] Received:", {
+    MessageSid,
+    MessageStatus,
+    To,
+    From,
+    bodyKeys: Object.keys(body),
+  });
+
   try {
-    const { MessageSid, MessageStatus, To, From } = req.body;
     const toDigits = normalizePhone(To || "");
 
     // Find campaign with this message (match by recipient phone, digits-only)
@@ -427,7 +440,10 @@ const handleTwilioWebhook = async (req, res) => {
       }
     }
 
-    if (campaign && target) {
+    if (!campaign || !target) {
+      console.log("[Twilio Webhook] No matching campaign/target for To digits:", toDigits, "campaigns checked:", campaigns.length);
+    } else {
+      console.log("[Twilio Webhook] Matched campaign:", campaign._id, "target phone (digits):", toDigits, "updating status to:", MessageStatus);
       switch (MessageStatus) {
         case "delivered":
           target.status = "delivered";
@@ -441,16 +457,19 @@ const handleTwilioWebhook = async (req, res) => {
           break;
         case "failed":
           target.status = "failed";
-          target.failureReason = req.body.ErrorMessage;
+          target.failureReason = body.ErrorMessage;
           campaign.stats.totalFailed += 1;
           break;
+        default:
+          console.log("[Twilio Webhook] Unhandled MessageStatus:", MessageStatus);
       }
       await campaign.save();
+      console.log("[Twilio Webhook] Saved. Stats now - delivered:", campaign.stats.totalDelivered, "read:", campaign.stats.totalRead);
     }
 
     res.status(200).send("OK");
   } catch (error) {
-    console.error("Webhook Error:", error);
+    console.error("[Twilio Webhook] Error:", error);
     res.status(500).send("Error");
   }
 };
