@@ -236,6 +236,7 @@ const sendCampaignMessages = async (campaign) => {
         if (result.success) {
           target.status = "sent";
           target.sentAt = new Date();
+          if (result.messageId) target.messageSid = result.messageId;
           campaign.stats.totalSent += 1;
         } else {
           target.status = "failed";
@@ -433,28 +434,38 @@ const handleTwilioWebhook = async (req, res) => {
   try {
     const toDigits = normalizePhoneForMatch(To || "");
 
-    // Find campaign with this message (match by recipient phone).
-    // Match targets with status "sent" OR "delivered" so we can apply delivered first, then read when Twilio sends both.
-    const campaigns = await WhatsAppCampaign.find({
-      "targetUsers.status": { $in: ["sent", "delivered"] },
-    });
+    // 1) Prefer exact match by MessageSid so the correct campaign is updated when the same number is in multiple campaigns.
     let campaign = null;
     let target = null;
-    for (const c of campaigns) {
-      const t = c.targetUsers.find(
-        (x) => (x.status === "sent" || x.status === "delivered") && normalizePhoneForMatch(x.phoneNumber) === toDigits
-      );
-      if (t) {
-        campaign = c;
-        target = t;
-        break;
+    if (MessageSid) {
+      campaign = await WhatsAppCampaign.findOne({ "targetUsers.messageSid": MessageSid });
+      if (campaign) {
+        target = campaign.targetUsers.find((t) => t.messageSid === MessageSid) || null;
+      }
+    }
+
+    // 2) Fallback: match by phone (for sends that didn't store messageSid, or legacy data).
+    if (!campaign || !target) {
+      const campaigns = await WhatsAppCampaign.find({
+        "targetUsers.status": { $in: ["sent", "delivered"] },
+      });
+      for (const c of campaigns) {
+        const t = c.targetUsers.find(
+          (x) => (x.status === "sent" || x.status === "delivered") && normalizePhoneForMatch(x.phoneNumber) === toDigits
+        );
+        if (t) {
+          campaign = c;
+          target = t;
+          break;
+        }
       }
     }
 
     if (!campaign || !target) {
-      console.log("[Twilio Webhook] No matching campaign/target for To digits:", toDigits);
+      console.log("[Twilio Webhook] No matching campaign/target for MessageSid:", MessageSid, "To digits:", toDigits);
     } else {
-      console.log("[Twilio Webhook] Matched campaign:", campaign._id, "target phone (digits):", toDigits, "current status:", target.status, "updating to:", MessageStatus);
+      const matchType = target.messageSid ? "MessageSid" : "phone";
+      console.log("[Twilio Webhook] Matched campaign:", campaign._id, "by", matchType, "target phone:", toDigits, "current status:", target.status, "updating to:", MessageStatus);
       let didUpdate = false;
       switch (MessageStatus) {
         case "delivered":
