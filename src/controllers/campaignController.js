@@ -5,7 +5,8 @@ const WhatsAppCampaign = require("../models/WhatsAppCampaign");
 const Email = require("../models/Email");
 const twilioService = require("../services/twilioService");
 const nodemailerService = require("../services/nodemailerService");
-const { formatEmailForSending } = require("../services/emailFormatter");
+const { formatEmailForSending, linkifyPlainUrls } = require("../services/emailFormatter");
+const { getMailTrackingOptions, setPendingTracking, clearPendingTracking } = require("../config/mailTracking");
 
 // Campaign scheduler - checks every minute for scheduled campaigns
 const startCampaignScheduler = () => {
@@ -970,34 +971,52 @@ const executeEmailCampaign = async (campaign) => {
           await emailRecord.save();
           campaign.emailRecords.push(emailRecord._id);
         } else {
-          // Format email body: preserve paragraphs and line breaks (works for plain text and HTML links)
-          const emailHtml = formatEmailForSending(campaign.emailConfig.bodyContent);
-
-          const result = await nodemailerService.sendEmail({
-            to: target.email,
-            from: campaign.emailConfig.senderEmail,
-            subject: campaign.emailConfig.subject,
-            html: emailHtml,
-          });
-
-          // Create Email record
+          // Create Email record first so we have an id for open/click tracking
+          console.log("[Mail tracking] step: creating Email record for tracking", { sentTo: target.email, campaignId: campaign._id.toString() });
           const emailRecord = new Email({
             sentBy: campaign.emailConfig.senderEmail,
             sentTo: target.email,
             subject: campaign.emailConfig.subject,
             bodyContent: campaign.emailConfig.bodyContent,
-            messageId: result.success ? result.messageId : null,
-            status: result.success ? "sent" : "failed",
-            error: result.success ? null : result.error,
+            messageId: null,
+            status: "sent",
+            error: null,
             campaignId: campaign._id,
           });
           await emailRecord.save();
           campaign.emailRecords.push(emailRecord._id);
+          console.log("[Mail tracking] step: Email record saved", { emailRecordId: emailRecord._id.toString() });
+
+          const emailHtml = linkifyPlainUrls(formatEmailForSending(campaign.emailConfig.bodyContent));
+          const trackingOptions = getMailTrackingOptions();
+          setPendingTracking(target.email, {
+            emailRecordId: emailRecord._id.toString(),
+            campaignId: campaign._id.toString(),
+            sentTo: target.email,
+          });
+          const result = await nodemailerService.sendEmailWithTracking(trackingOptions, {
+            to: target.email,
+            from: campaign.emailConfig.senderEmail,
+            subject: campaign.emailConfig.subject,
+            html: emailHtml,
+          });
+          clearPendingTracking(target.email);
+          console.log("[Mail tracking] step: send result", { success: result.success, messageId: result.messageId || null, error: result.error || null });
+          if (result.success) {
+            console.log("[Mail tracking] step: tracking URLs embedded in email – open: baseUrl/blank-image/:jwt, click: baseUrl/link/:jwt");
+          }
+
+          emailRecord.messageId = result.success ? result.messageId : null;
+          emailRecord.status = result.success ? "sent" : "failed";
+          emailRecord.error = result.success ? null : result.error;
+          await emailRecord.save();
+          console.log("[Mail tracking] step: Email record updated with send result", { status: emailRecord.status });
 
           if (result.success) {
             target.emailStatus = "sent";
             target.emailSentAt = new Date();
             campaign.stats.totalEmailSent += 1;
+            campaign.stats.totalEmailDelivered = (campaign.stats.totalEmailDelivered || 0) + 1;
           } else {
             target.emailStatus = "failed";
             target.emailFailureReason = result.error;

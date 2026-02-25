@@ -48,4 +48,16 @@ function formatEmailForSending(bodyContent) {
   return html + disclaimer;
 }
 
-module.exports = { formatEmailBodyToHtml, formatEmailForSending };
+/**
+ * Turns plain-text URLs in HTML into <a href="..."> so nodemailer-mail-tracking can wrap them for click tracking.
+ * Only touches text between > and < (does not alter existing attributes).
+ */
+function linkifyPlainUrls(html) {
+  if (!html || typeof html !== "string") return html;
+  return html.replace(
+    />([^<]*?)(https?:\/\/[^\s<>"']+)([^<]*?)</g,
+    (_, before, url, after) => `>${before}<a href="${url}">${url}</a>${after}<`
+  );
+}
+
+module.exports = { formatEmailBodyToHtml, formatEmailForSending, linkifyPlainUrls };
