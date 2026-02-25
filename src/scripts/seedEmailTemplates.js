@@ -2,8 +2,8 @@ const mongoose = require("mongoose");
 const EmailTemplate = require("../models/EmailTemplate");
 require("dotenv").config();
 
-// Landing base: deployed URL (https://www-login.vercel.app/). Links go directly to e.g. .../amazon.
-const LANDING_BASE = process.env.LANDING_PAGES_BASE_URL || "https://www-login.vercel.app";
+// Landing base: deployed URL (https://cybershieldlearningportal.vercel.app/). Links go directly to e.g. .../amazon.
+const LANDING_BASE = process.env.LANDING_PAGES_BASE_URL || "https://cybershieldlearningportal.vercel.app";
 const link = (slug, displayUrl) => `<a href="${LANDING_BASE}/${slug}">${displayUrl}</a>`;
 // Generic link text only (no URL in body) — better deliverability; filters can't match a suspicious domain string.
 const linkGeneric = (slug, text) => `<a href="${LANDING_BASE}/${slug}">${text}</a>`;
