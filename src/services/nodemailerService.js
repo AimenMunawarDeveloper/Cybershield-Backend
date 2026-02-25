@@ -1,5 +1,4 @@
 const nodemailer = require("nodemailer");
-const { sendMailWithTracking: librarySendMailWithTracking } = require("../config/mailTracking");
 
 let transporter = null;
 
@@ -26,6 +25,7 @@ const getTransporter = () => {
 
   return transporter;
 };
+
 
 const sendEmail = async (emailData) => {
   try {
@@ -62,48 +62,4 @@ const sendEmail = async (emailData) => {
   }
 };
 
-/**
- * Send email with open/click tracking via nodemailer-mail-tracking.
- * @param {object} mailTrackingOptions - from getMailTrackingOptions() (must have pending data set via setPendingTracking before calling)
- * @param {object} emailData - { to, from?, subject, html }
- * @returns {Promise<{ success: boolean, messageId?: string, error?: string }>}
- */
-const sendEmailWithTracking = async (mailTrackingOptions, emailData) => {
-  try {
-    const { to, subject, html } = emailData;
-    console.log("[Mail tracking] step: sendEmailWithTracking called", { to, subject: (subject || "").substring(0, 50) + (subject && subject.length > 50 ? "..." : ""), htmlLength: (html || "").length });
-    if (!to || !subject || !html) {
-      throw new Error("Missing required fields: to, subject, html");
-    }
-    const fromAddress = emailData.from || process.env.SMTP_FROM || process.env.SMTP_USER;
-    if (!fromAddress) {
-      throw new Error("SMTP_USER or SMTP_FROM must be set in .env");
-    }
-
-    const transporter = getTransporter();
-    const sendMailOptions = {
-      from: fromAddress,
-      to,
-      subject,
-      html,
-    };
-    console.log("[Mail tracking] step: calling library sendMail (injects pixel + link wrapping)");
-    const results = await librarySendMailWithTracking(mailTrackingOptions, transporter, sendMailOptions);
-    const first = results && results[0];
-    if (first && first.result) {
-      console.log("[Mail tracking] step: sendEmailWithTracking success", { messageId: first.result.messageId });
-      return { success: true, messageId: first.result.messageId };
-    }
-    if (first && first.error) {
-      console.log("[Mail tracking] step: sendEmailWithTracking failed", { error: first.error.message || String(first.error) });
-      return { success: false, error: first.error.message || String(first.error) };
-    }
-    console.log("[Mail tracking] step: sendEmailWithTracking no result from library");
-    return { success: false, error: "No result from sendMail" };
-  } catch (error) {
-    console.error("[Mail tracking] sendEmailWithTracking error", error);
-    return { success: false, error: error.message };
-  }
-};
-
-module.exports = { sendEmail, sendEmailWithTracking, getTransporter };
+module.exports = { sendEmail };

@@ -38,9 +38,6 @@ const emailSchema = new mongoose.Schema(
       ref: "Campaign",
       required: false,
     },
-    // Telemetry (open = read, click) — set when tracking pixel loads / link is clicked
-    openedAt: { type: Date, required: false, default: null },
-    clickedAt: { type: Date, required: false, default: null },
   },
   {
     timestamps: true,
