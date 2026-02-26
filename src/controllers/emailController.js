@@ -87,28 +87,28 @@ const sendEmail = async (req, res) => {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-    const result = await nodemailerService.sendEmail({
+        // Create Email record first so we can inject the open-tracking pixel with this id
+        const emailRecord = new Email({
+          sentBy,
+          sentTo: recipientEmail,
+          subject: subject,
+          bodyContent: bodyContent,
+          status: "pending",
+        });
+        await emailRecord.save();
+
+        const result = await nodemailerService.sendEmail({
           to: recipientEmail,
           subject: subject,
           html: emailHtml,
-    });
+          trackingEmailId: emailRecord._id,
+        });
 
-        // Save email to database
-    try {
-      const emailRecord = new Email({
-        sentBy,
-            sentTo: recipientEmail,
-            subject: subject,
-            bodyContent: bodyContent,
-        messageId: result.success ? result.messageId : null,
-        status: result.success ? "sent" : "failed",
-        error: result.success ? null : result.error,
-      });
-
-      await emailRecord.save();
-    } catch (dbError) {
-      console.error("Failed to save email to database:", dbError);
-    }
+        // Update record with send result
+        emailRecord.messageId = result.success ? result.messageId : null;
+        emailRecord.status = result.success ? "sent" : "failed";
+        emailRecord.error = result.success ? null : result.error;
+        await emailRecord.save();
 
     if (result.success) {
           results.successful++;

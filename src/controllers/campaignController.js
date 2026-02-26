@@ -970,29 +970,33 @@ const executeEmailCampaign = async (campaign) => {
           await emailRecord.save();
           campaign.emailRecords.push(emailRecord._id);
         } else {
-          // Format email body: preserve paragraphs and line breaks (works for plain text and HTML links)
-          const emailHtml = formatEmailForSending(campaign.emailConfig.bodyContent);
-
-          const result = await nodemailerService.sendEmail({
-            to: target.email,
-            from: campaign.emailConfig.senderEmail,
-            subject: campaign.emailConfig.subject,
-            html: emailHtml,
-          });
-
-          // Create Email record
+          // Create Email record first so we have an id for the open-tracking pixel
           const emailRecord = new Email({
             sentBy: campaign.emailConfig.senderEmail,
             sentTo: target.email,
             subject: campaign.emailConfig.subject,
             bodyContent: campaign.emailConfig.bodyContent,
-            messageId: result.success ? result.messageId : null,
-            status: result.success ? "sent" : "failed",
-            error: result.success ? null : result.error,
+            status: "pending",
             campaignId: campaign._id,
           });
           await emailRecord.save();
           campaign.emailRecords.push(emailRecord._id);
+
+          // Format email body and send with tracking pixel (pixel URL includes emailRecord._id)
+          const emailHtml = formatEmailForSending(campaign.emailConfig.bodyContent);
+          const result = await nodemailerService.sendEmail({
+            to: target.email,
+            from: campaign.emailConfig.senderEmail,
+            subject: campaign.emailConfig.subject,
+            html: emailHtml,
+            trackingEmailId: emailRecord._id,
+          });
+
+          // Update Email record with send result
+          emailRecord.messageId = result.success ? result.messageId : null;
+          emailRecord.status = result.success ? "sent" : "failed";
+          emailRecord.error = result.success ? null : result.error;
+          await emailRecord.save();
 
           if (result.success) {
             target.emailStatus = "sent";
