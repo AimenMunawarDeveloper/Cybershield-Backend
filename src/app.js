@@ -84,22 +84,28 @@ app.use(
       }
       const wasAlreadyOpened = !!doc.openedAt;
       if (!wasAlreadyOpened) {
-        doc.openedAt = new Date();
-        await doc.save();
-        if (doc.campaignId) {
-          await Campaign.updateOne(
-            { _id: doc.campaignId },
-            {
-              $inc: { "stats.totalEmailOpened": 1 },
-              $set: {
-                "targetUsers.$[elem].emailStatus": "opened",
-                "targetUsers.$[elem].emailOpenedAt": doc.openedAt,
+        // Ignore opens within 90s of send: Gmail/mail servers often fetch images on delivery (scanning),
+        // which would falsely mark as opened before the user actually opened the email.
+        const sentTime = doc.createdAt || new Date();
+        const secondsSinceSent = (Date.now() - new Date(sentTime).getTime()) / 1000;
+        if (secondsSinceSent >= 90) {
+          doc.openedAt = new Date();
+          await doc.save();
+          if (doc.campaignId) {
+            await Campaign.updateOne(
+              { _id: doc.campaignId },
+              {
+                $inc: { "stats.totalEmailOpened": 1 },
+                $set: {
+                  "targetUsers.$[elem].emailStatus": "opened",
+                  "targetUsers.$[elem].emailOpenedAt": doc.openedAt,
+                },
               },
-            },
-            { arrayFilters: [{ "elem.email": doc.sentTo }] }
-          );
+              { arrayFilters: [{ "elem.email": doc.sentTo }] }
+            );
+          }
+          console.log("Email open recorded", { id, sentTo: doc.sentTo });
         }
-        console.log("Email open recorded", { id, sentTo: doc.sentTo });
       }
     } catch (err) {
       console.error("Email open tracking DB update failed:", err.message);
