@@ -1,5 +1,7 @@
 const app = require('./app');
 const connectDB = require('./config/database');
+const campaignController = require('./controllers/campaignController');
+const whatsappCampaignController = require('./controllers/whatsappCampaignController');
 
 const PORT = process.env.PORT || 5001;
 
@@ -18,12 +20,22 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-// Connect to database
-connectDB();
+async function start() {
+  // Connect to database first so schedulers don't run before DB is ready
+  await connectDB();
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 CyberShield Backend running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  // Start campaign schedulers only after DB is connected (avoids buffering timeout)
+  if (campaignController.startCampaignScheduler) campaignController.startCampaignScheduler();
+  if (whatsappCampaignController.startCampaignScheduler) whatsappCampaignController.startCampaignScheduler();
+
+  app.listen(PORT, () => {
+    console.log(`🚀 CyberShield Backend running on port ${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/health`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });

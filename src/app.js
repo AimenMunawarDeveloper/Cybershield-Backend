@@ -19,8 +19,18 @@ const chatRoutes = require("./routes/chat");
 const courseRoutes = require("./routes/courses");
 const certificateRoutes = require("./routes/certificates");
 const uploadRoutes = require("./routes/upload");
+const Email = require("./models/Email");
+const Campaign = require("./models/Campaign");
 
 const app = express();
+
+// 1x1 transparent GIF for email open tracking (Buffer method – no file read)
+const TRACKING_PIXEL_GIF = Buffer.from([
+  0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00,
+  0x80, 0x00, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x2c,
+  0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02,
+  0x02, 0x44, 0x01, 0x00, 0x3b,
+]);
 
 // Security middleware
 app.use(helmet());
@@ -53,7 +63,54 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
   });
-}); 
+});
+
+// Email open tracking: middleware logs the request, then handler serves 1x1 GIF
+app.use(
+  "/track/open/:id",
+  (req, res, next) => {
+    if (req.method !== "GET") return next();
+    console.log("Email open tracking: request for image", { id: req.params.id });
+    next();
+  },
+  async (req, res, next) => {
+    if (req.method !== "GET") return next();
+    const id = req.params.id;
+    try {
+      const doc = await Email.findById(id);
+      if (!doc) {
+        next();
+        return;
+      }
+      const wasAlreadyOpened = !!doc.openedAt;
+      if (!wasAlreadyOpened) {
+        doc.openedAt = new Date();
+        await doc.save();
+        if (doc.campaignId) {
+          await Campaign.updateOne(
+            { _id: doc.campaignId },
+            {
+              $inc: { "stats.totalEmailOpened": 1 },
+              $set: {
+                "targetUsers.$[elem].emailStatus": "opened",
+                "targetUsers.$[elem].emailOpenedAt": doc.openedAt,
+              },
+            },
+            { arrayFilters: [{ "elem.email": doc.sentTo }] }
+          );
+        }
+        console.log("Email open recorded", { id, sentTo: doc.sentTo });
+      }
+    } catch (err) {
+      console.error("Email open tracking DB update failed:", err.message);
+    }
+    next();
+  }
+);
+app.get("/track/open/:id", (req, res) => {
+  res.writeHead(200, { "Content-Type": "image/gif" });
+  res.end(TRACKING_PIXEL_GIF, "binary");
+});
 
 // API routes
 app.use("/api/admins", adminRoutes);
