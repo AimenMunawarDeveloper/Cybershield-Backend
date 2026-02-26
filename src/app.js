@@ -118,6 +118,50 @@ app.get("/track/open/:id", (req, res) => {
   res.end(TRACKING_PIXEL_GIF, "binary");
 });
 
+// Email click tracking: redirect through backend to record click, then redirect to destination
+const CLICK_GRACE_SECONDS = 90;
+const FALLBACK_REDIRECT = "https://www.google.com";
+
+app.get("/track/click/:id", async (req, res) => {
+  const id = req.params.id;
+  const rawUrl = req.query.url;
+  let destination = typeof rawUrl === "string" ? decodeURIComponent(rawUrl.trim()) : "";
+  if (!destination || !/^https?:\/\//i.test(destination)) {
+    destination = FALLBACK_REDIRECT;
+  }
+  try {
+    const doc = await Email.findById(id);
+    if (doc) {
+      const wasAlreadyClicked = !!doc.clickedAt;
+      if (!wasAlreadyClicked) {
+        const sentTime = doc.createdAt || new Date();
+        const secondsSinceSent = (Date.now() - new Date(sentTime).getTime()) / 1000;
+        if (secondsSinceSent >= CLICK_GRACE_SECONDS) {
+          doc.clickedAt = new Date();
+          await doc.save();
+          if (doc.campaignId) {
+            await Campaign.updateOne(
+              { _id: doc.campaignId },
+              {
+                $inc: { "stats.totalEmailClicked": 1 },
+                $set: {
+                  "targetUsers.$[elem].emailStatus": "clicked",
+                  "targetUsers.$[elem].emailClickedAt": doc.clickedAt,
+                },
+              },
+              { arrayFilters: [{ "elem.email": doc.sentTo }] }
+            );
+          }
+          console.log("Email click recorded", { id, sentTo: doc.sentTo });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Email click tracking DB update failed:", err.message);
+  }
+  res.redirect(302, destination);
+});
+
 // API routes
 app.use("/api/admins", adminRoutes);
 app.use("/api/orgs", orgRoutes);

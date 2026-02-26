@@ -44,6 +44,27 @@ const injectOpenTrackingPixel = (html, emailRecordId) => {
   return html + pixel;
 };
 
+/**
+ * Wraps every http(s) link in HTML with a redirect through our backend so we can record the click, then redirect to the real URL.
+ * @param {string} html - Full HTML of the email
+ * @param {string} emailRecordId - MongoDB _id of the Email record
+ * @returns {string} HTML with links replaced by track/click redirect URLs
+ */
+const injectClickTracking = (html, emailRecordId) => {
+  if (!html || !emailRecordId) return html;
+  const baseUrl = (process.env.BACKEND_URL || process.env.API_URL || "http://localhost:5001").replace(/\/$/, "");
+  const clickBase = `${baseUrl}/track/click/${emailRecordId}`;
+  // Replace href="http://..." or href="https://..." with our redirect (skip our own track URLs to avoid loops)
+  return html.replace(
+    /(<a\s[^>]*href=)(["'])(https?:\/\/[^"']+)\2/gi,
+    (match, prefix, quote, url) => {
+      if (url.indexOf("/track/open/") !== -1 || url.indexOf("/track/click/") !== -1) return match;
+      const encoded = encodeURIComponent(url);
+      return `${prefix}${quote}${clickBase}?url=${encoded}${quote}`;
+    }
+  );
+};
+
 const sendEmail = async (emailData) => {
   try {
     const { to, subject, html, trackingEmailId } = emailData;
@@ -58,7 +79,11 @@ const sendEmail = async (emailData) => {
       throw new Error("SMTP_USER or SMTP_FROM must be set in .env");
     }
 
-    const finalHtml = trackingEmailId ? injectOpenTrackingPixel(html, trackingEmailId.toString()) : html;
+    let finalHtml = html;
+    if (trackingEmailId) {
+      finalHtml = injectOpenTrackingPixel(finalHtml, trackingEmailId.toString());
+      finalHtml = injectClickTracking(finalHtml, trackingEmailId.toString());
+    }
 
     const transporter = getTransporter();
     const info = await transporter.sendMail({

@@ -42,6 +42,10 @@ const emailSchema = new mongoose.Schema(
       type: Date,
       required: false,
     },
+    clickedAt: {
+      type: Date,
+      required: false,
+    },
   },
   {
     timestamps: true,
