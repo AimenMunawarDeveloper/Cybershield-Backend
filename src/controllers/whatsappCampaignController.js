@@ -51,7 +51,7 @@ const startCampaignScheduler = () => {
     }
   }, 60000);
 };
-// Scheduler is started from server.js after DB connection (do not run on module load)
+startCampaignScheduler();
 const createCampaign = async (req, res) => {
   try {
     const {
@@ -590,5 +590,4 @@ module.exports = {
   getCampaignAnalytics,
   handleTwilioWebhook,
   recordClick,
-  startCampaignScheduler,
 };

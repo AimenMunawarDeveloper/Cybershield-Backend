@@ -26,7 +26,7 @@ const emailSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "sent", "failed"],
+      enum: ["sent", "failed"],
       default: "sent",
     },
     error: {
@@ -38,10 +38,6 @@ const emailSchema = new mongoose.Schema(
       ref: "Campaign",
       required: false,
     },
-    openedAt: {
-      type: Date,
-      required: false,
-    },
   },
   {
     timestamps: true,
@@ -51,7 +47,6 @@ const emailSchema = new mongoose.Schema(
 // Indexes for better query performance
 emailSchema.index({ sentBy: 1, createdAt: -1 });
 emailSchema.index({ sentTo: 1, createdAt: -1 });
-emailSchema.index({ campaignId: 1, openedAt: 1 });
 
 module.exports = mongoose.model("Email", emailSchema);
 

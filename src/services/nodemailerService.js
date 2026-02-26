@@ -27,26 +27,9 @@ const getTransporter = () => {
 };
 
 
-/**
- * Injects a 1x1 tracking pixel into HTML so when the email is opened the client requests this URL and we can record the open.
- * @param {string} html - Full HTML of the email
- * @param {string} emailRecordId - MongoDB _id of the Email record (used in the tracking URL)
- * @returns {string} HTML with tracking pixel appended before </body>
- */
-const injectOpenTrackingPixel = (html, emailRecordId) => {
-  if (!html || !emailRecordId) return html;
-  const baseUrl = (process.env.BACKEND_URL || process.env.API_URL || "http://localhost:5001").replace(/\/$/, "");
-  const trackingUrl = `${baseUrl}/track/open/${emailRecordId}`;
-  const pixel = `<img src="${trackingUrl}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;" />`;
-  if (html.includes("</body>")) {
-    return html.replace("</body>", pixel + "\n</body>");
-  }
-  return html + pixel;
-};
-
 const sendEmail = async (emailData) => {
   try {
-    const { to, subject, html, trackingEmailId } = emailData;
+    const { to, subject, html } = emailData;
 
     if (!to || !subject || !html) {
       throw new Error("Missing required fields: to, subject, html");
@@ -58,14 +41,12 @@ const sendEmail = async (emailData) => {
       throw new Error("SMTP_USER or SMTP_FROM must be set in .env");
     }
 
-    const finalHtml = trackingEmailId ? injectOpenTrackingPixel(html, trackingEmailId.toString()) : html;
-
     const transporter = getTransporter();
     const info = await transporter.sendMail({
       from: fromAddress,
       to: to,
       subject: subject,
-      html: finalHtml,
+      html: html,
     });
 
     return {
@@ -81,4 +62,4 @@ const sendEmail = async (emailData) => {
   }
 };
 
-module.exports = { sendEmail, injectOpenTrackingPixel };
+module.exports = { sendEmail };
