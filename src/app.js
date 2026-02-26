@@ -166,13 +166,16 @@ app.get("/track/click/:id", async (req, res) => {
 });
 
 // Email credentials-entered tracking (landing page form submit – no credentials stored, just that user submitted)
+// CORS preflight: OPTIONS must be handled so the landing page (different origin) can POST
+app.options("/track/credentials", (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.status(204).end();
+});
+
 app.post("/track/credentials", express.json(), async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
-  if (req.method === "OPTIONS") {
-    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type");
-    return res.status(204).end();
-  }
   const emailId = (req.body && req.body.emailId) || (req.query && req.query.e);
   if (!emailId) {
     return res.status(400).json({ success: false, message: "Missing emailId" });
