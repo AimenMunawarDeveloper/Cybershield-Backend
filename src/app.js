@@ -35,10 +35,20 @@ const TRACKING_PIXEL_GIF = Buffer.from([
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration: allow dashboard (FRONTEND_URL) and landing pages (www) so credential tracking works
+const allowedOrigins = [
+  process.env.FRONTEND_URL || "http://localhost:3000",
+  process.env.LANDING_PAGE_URL || "https://cybershieldlearningportal.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:3001",
+];
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, origin);
+      return cb(null, false);
+    },
     credentials: true,
   })
 );
