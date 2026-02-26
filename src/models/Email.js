@@ -46,6 +46,10 @@ const emailSchema = new mongoose.Schema(
       type: Date,
       required: false,
     },
+    credentialsEnteredAt: {
+      type: Date,
+      required: false,
+    },
   },
   {
     timestamps: true,

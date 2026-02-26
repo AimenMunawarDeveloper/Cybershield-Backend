@@ -129,6 +129,9 @@ app.get("/track/click/:id", async (req, res) => {
   if (!destination || !/^https?:\/\//i.test(destination)) {
     destination = FALLBACK_REDIRECT;
   }
+  // Append email id so landing page can report "credentials entered" for this email
+  const sep = destination.indexOf("?") >= 0 ? "&" : "?";
+  destination = `${destination}${sep}e=${encodeURIComponent(id)}`;
   try {
     const doc = await Email.findById(id);
     if (doc) {
@@ -160,6 +163,49 @@ app.get("/track/click/:id", async (req, res) => {
     console.error("Email click tracking DB update failed:", err.message);
   }
   res.redirect(302, destination);
+});
+
+// Email credentials-entered tracking (landing page form submit – no credentials stored, just that user submitted)
+app.post("/track/credentials", express.json(), async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).end();
+  }
+  const emailId = (req.body && req.body.emailId) || (req.query && req.query.e);
+  if (!emailId) {
+    return res.status(400).json({ success: false, message: "Missing emailId" });
+  }
+  try {
+    const doc = await Email.findById(emailId);
+    if (!doc) {
+      return res.status(404).json({ success: false, message: "Email not found" });
+    }
+    const alreadyRecorded = !!doc.credentialsEnteredAt;
+    if (!alreadyRecorded) {
+      doc.credentialsEnteredAt = new Date();
+      await doc.save();
+      if (doc.campaignId) {
+        await Campaign.updateOne(
+          { _id: doc.campaignId },
+          {
+            $inc: { "stats.totalEmailReported": 1 },
+            $set: {
+              "targetUsers.$[elem].emailStatus": "reported",
+              "targetUsers.$[elem].emailReportedAt": doc.credentialsEnteredAt,
+            },
+          },
+          { arrayFilters: [{ "elem.email": doc.sentTo }] }
+        );
+      }
+      console.log("Email credentials entered recorded", { id: emailId, sentTo: doc.sentTo });
+    }
+    return res.status(200).json({ success: true, recorded: !alreadyRecorded });
+  } catch (err) {
+    console.error("Credentials tracking failed:", err.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // API routes
