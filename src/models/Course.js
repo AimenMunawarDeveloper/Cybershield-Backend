@@ -37,6 +37,7 @@ const courseModuleSchema = new mongoose.Schema(
     title: { type: String, default: "" },
     sections: [moduleSectionSchema],
     quiz: [quizQuestionSchema],
+    activityType: { type: String, enum: ["email", "whatsapp"], default: null },
   },
   { _id: true }
 );
