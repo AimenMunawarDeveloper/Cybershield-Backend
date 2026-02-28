@@ -26,7 +26,9 @@ function getWhatsAppRiskWeight(eventType) {
 
 /**
  * Compute compounded WhatsApp risk score from WhatsAppRiskEvents with time decay.
- * Mirrors email logic: raw = sum(weight * DECAY^daysSince). Normalized to [0, 1] by dividing by MAX_RAW_SCORE (1.4).
+ * Per-campaign cap: each campaign contributes at most 1.4 (one read + one click + one credentials).
+ * Duplicate events (e.g. multiple reads/clicks) do not sum — we take max per type per campaign, then sum with decay.
+ * This matches email semantics and prevents rawScore from blowing past 1.4 when the same user has many duplicate events.
  */
 async function computeWhatsAppRiskScore(userId) {
   const id = userId && mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(userId) : userId;
@@ -37,21 +39,32 @@ async function computeWhatsAppRiskScore(userId) {
   }
 
   const now = Date.now();
-  let rawScore = 0;
+  // Group by campaign (null/undefined = one bucket for events without campaign)
+  const byCampaign = new Map();
   for (const ev of events) {
+    const key = ev.campaignId ? ev.campaignId.toString() : "__none__";
+    if (!byCampaign.has(key)) byCampaign.set(key, { read: 0, click: 0, cred: 0, latestAt: 0 });
+    const w = ev.weight != null ? ev.weight : getWhatsAppRiskWeight(ev.eventType);
     const createdAt = ev.createdAt ? new Date(ev.createdAt).getTime() : now;
-    const daysSince = (now - createdAt) / (1000 * 60 * 60 * 24);
-    const decay = Math.pow(WHATSAPP_RISK_DECAY_RATE, Math.max(0, daysSince));
-    const weight = ev.weight != null ? ev.weight : getWhatsAppRiskWeight(ev.eventType);
-    const contrib = weight * decay;
-    rawScore += contrib;
-    console.log("[WhatsAppRisk]   event", ev.eventType, "weight=", weight, "daysSince=", daysSince.toFixed(2), "decay=", decay.toFixed(4), "contrib=", contrib.toFixed(4));
+    const bucket = byCampaign.get(key);
+    bucket.latestAt = Math.max(bucket.latestAt, createdAt);
+    if (ev.eventType === "whatsapp_read") bucket.read = Math.max(bucket.read, w);
+    else if (ev.eventType === "whatsapp_clicked") bucket.click = Math.max(bucket.click, w);
+    else if (ev.eventType === "whatsapp_credentials_submitted") bucket.cred = Math.max(bucket.cred, w);
   }
 
-  // Normalize by max possible raw (1.4), then clamp to [0, 1] — same as email
+  let rawScore = 0;
+  for (const [, bucket] of byCampaign) {
+    const rawCampaign = Math.min(MAX_RAW_SCORE, bucket.read + bucket.click + bucket.cred);
+    const daysSince = (now - bucket.latestAt) / (1000 * 60 * 60 * 24);
+    const decay = Math.pow(WHATSAPP_RISK_DECAY_RATE, Math.max(0, daysSince));
+    rawScore += rawCampaign * decay;
+  }
+
+  // Normalize by max possible raw (1.4), then clamp to [0, 1]
   const normalized = Math.min(1, Math.max(0, rawScore / MAX_RAW_SCORE));
   const score = Math.round(normalized * 100) / 100;
-  console.log("[WhatsAppRisk] computeWhatsAppRiskScore userId=", id?.toString(), "| events=", events.length, "rawScore=", rawScore.toFixed(4), "normalized=", score, "(raw/", MAX_RAW_SCORE, ")");
+  console.log("[WhatsAppRisk] computeWhatsAppRiskScore userId=", id?.toString(), "| events=", events.length, "campaigns=", byCampaign.size, "rawScore=", rawScore.toFixed(4), "normalized=", score);
   return score;
 }
 
