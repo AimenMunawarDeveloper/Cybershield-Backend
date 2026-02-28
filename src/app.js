@@ -21,6 +21,7 @@ const certificateRoutes = require("./routes/certificates");
 const uploadRoutes = require("./routes/upload");
 const Email = require("./models/Email");
 const Campaign = require("./models/Campaign");
+const WhatsAppCampaign = require("./models/WhatsAppCampaign");
 
 const app = express();
 
@@ -41,12 +42,18 @@ const allowedOrigins = [
   process.env.LANDING_PAGE_URL || "https://cybershieldlearningportal.vercel.app",
   "http://localhost:3000",
   "http://localhost:3001",
+  "http://localhost:3002",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+  "http://127.0.0.1:3002",
 ];
 app.use(
   cors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, origin);
+      // Allow any localhost for local credential-tracking tests
+      if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, origin);
       return cb(null, false);
     },
     credentials: true,
@@ -187,38 +194,81 @@ app.options("/track/credentials", (req, res) => {
 app.post("/track/credentials", express.json(), async (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   const emailId = (req.body && req.body.emailId) || (req.query && req.query.e);
-  if (!emailId) {
-    return res.status(400).json({ success: false, message: "Missing emailId" });
-  }
-  try {
-    const doc = await Email.findById(emailId);
-    if (!doc) {
-      return res.status(404).json({ success: false, message: "Email not found" });
-    }
-    const alreadyRecorded = !!doc.credentialsEnteredAt;
-    if (!alreadyRecorded) {
-      doc.credentialsEnteredAt = new Date();
-      await doc.save();
-      if (doc.campaignId) {
-        await Campaign.updateOne(
-          { _id: doc.campaignId },
-          {
-            $inc: { "stats.totalEmailReported": 1 },
-            $set: {
-              "targetUsers.$[elem].emailStatus": "reported",
-              "targetUsers.$[elem].emailReportedAt": doc.credentialsEnteredAt,
-            },
-          },
-          { arrayFilters: [{ "elem.email": doc.sentTo }] }
-        );
+  const clickToken = (req.body && req.body.clickToken) || (req.query && req.query.ct);
+
+  // Email phishing: record credentials entered for this email
+  if (emailId) {
+    try {
+      const doc = await Email.findById(emailId);
+      if (!doc) {
+        return res.status(404).json({ success: false, message: "Email not found" });
       }
-      console.log("Email credentials entered recorded", { id: emailId, sentTo: doc.sentTo });
+      const alreadyRecorded = !!doc.credentialsEnteredAt;
+      if (!alreadyRecorded) {
+        doc.credentialsEnteredAt = new Date();
+        await doc.save();
+        if (doc.campaignId) {
+          await Campaign.updateOne(
+            { _id: doc.campaignId },
+            {
+              $inc: { "stats.totalEmailReported": 1 },
+              $set: {
+                "targetUsers.$[elem].emailStatus": "reported",
+                "targetUsers.$[elem].emailReportedAt": doc.credentialsEnteredAt,
+              },
+            },
+            { arrayFilters: [{ "elem.email": doc.sentTo }] }
+          );
+        }
+        console.log("Email credentials entered recorded", { id: emailId, sentTo: doc.sentTo });
+      }
+      return res.status(200).json({ success: true, recorded: !alreadyRecorded });
+    } catch (err) {
+      console.error("Credentials tracking failed (email):", err.message);
+      return res.status(500).json({ success: false, message: "Server error" });
     }
-    return res.status(200).json({ success: true, recorded: !alreadyRecorded });
-  } catch (err) {
-    console.error("Credentials tracking failed:", err.message);
-    return res.status(500).json({ success: false, message: "Server error" });
   }
+
+  // WhatsApp phishing: record credentials entered for this target (clickToken from landing URL ?ct=)
+  if (clickToken) {
+    try {
+      const campaign = await WhatsAppCampaign.findOne({ "targetUsers.clickToken": clickToken });
+      if (!campaign) {
+        return res.status(404).json({ success: false, message: "Campaign target not found" });
+      }
+      const target = campaign.targetUsers.find((t) => t.clickToken === clickToken);
+      if (!target) {
+        return res.status(404).json({ success: false, message: "Target not found" });
+      }
+      const alreadyRecorded = target.status === "reported";
+      if (!alreadyRecorded) {
+        target.status = "reported";
+        target.reportedAt = new Date();
+        campaign.stats.totalReported = (campaign.stats.totalReported || 0) + 1;
+        await campaign.save();
+        if (campaign.managedByParentCampaign) {
+          await Campaign.updateOne(
+            { whatsappCampaignId: campaign._id },
+            {
+              $inc: { "stats.totalWhatsappReported": 1 },
+              $set: {
+                "targetUsers.$[elem].whatsappStatus": "reported",
+                "targetUsers.$[elem].whatsappReportedAt": target.reportedAt,
+              },
+            },
+            { arrayFilters: [{ "elem.phoneNumber": target.phoneNumber }] }
+          );
+        }
+        console.log("WhatsApp credentials entered recorded", { campaignId: campaign._id, phoneNumber: target.phoneNumber });
+      }
+      return res.status(200).json({ success: true, recorded: !alreadyRecorded });
+    } catch (err) {
+      console.error("Credentials tracking failed (whatsapp):", err.message);
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+
+  return res.status(400).json({ success: false, message: "Missing emailId or clickToken" });
 });
 
 // API routes

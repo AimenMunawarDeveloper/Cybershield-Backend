@@ -66,6 +66,7 @@ const createCampaign = async (req, res) => {
     } = req.body;
 
     const userId = req.user._id;
+    const organizationId = req.user.orgId?._id || req.user.orgId;
 
     let campaignTargets = [];
     if (manualUsers && manualUsers.length > 0) {
@@ -78,7 +79,7 @@ const createCampaign = async (req, res) => {
       // Get target users from database
       const targetUsers = await User.find({
         _id: { $in: targetUserIds },
-        orgId: req.user.orgId,
+        orgId: organizationId,
       }).select("_id displayName email");
 
       if (targetUsers.length === 0) {
@@ -104,7 +105,7 @@ const createCampaign = async (req, res) => {
     const campaign = new WhatsAppCampaign({
       name,
       description,
-      organizationId: req.user.orgId,
+      organizationId,
       createdBy: userId,
       templateId: "manual_template",
       targetUsers: campaignTargets,
@@ -132,9 +133,10 @@ const createCampaign = async (req, res) => {
 const getCampaigns = async (req, res) => {
   try {
     const { page = 1, limit = 10, status } = req.query;
-    const organizationId = req.user.orgId;
+    // Handle both populated and non-populated orgId (auth middleware populates orgId)
+    const organizationId = req.user.orgId?._id || req.user.orgId;
 
-    const query = { organizationId };
+    const query = organizationId ? { organizationId } : {};
     if (status) {
       query.status = status;
     }
@@ -170,12 +172,14 @@ const getCampaigns = async (req, res) => {
 const getCampaign = async (req, res) => {
   try {
     const { campaignId } = req.params;
-    const organizationId = req.user.orgId;
+    const organizationId = req.user.orgId?._id || req.user.orgId;
 
-    const campaign = await WhatsAppCampaign.findOne({
-      _id: campaignId,
-      organizationId,
-    }).populate("createdBy", "firstName lastName email");
+    const query = { _id: campaignId };
+    if (organizationId) query.organizationId = organizationId;
+    const campaign = await WhatsAppCampaign.findOne(query).populate(
+      "createdBy",
+      "firstName lastName email"
+    );
 
     if (!campaign) {
       return res.status(404).json({
@@ -200,12 +204,11 @@ const getCampaign = async (req, res) => {
 const startCampaign = async (req, res) => {
   try {
     const { campaignId } = req.params;
-    const organizationId = req.user.orgId;
+    const organizationId = req.user.orgId?._id || req.user.orgId;
 
-    const campaign = await WhatsAppCampaign.findOne({
+    let campaign = await WhatsAppCampaign.findOne({
       _id: campaignId,
-      organizationId,
-      status: { $in: ["draft", "scheduled"] },
+      ...(organizationId && { organizationId }),
     });
 
     if (!campaign) {
@@ -214,6 +217,23 @@ const startCampaign = async (req, res) => {
         message: "Campaign not found or cannot be started",
       });
     }
+
+    // Already running or completed (e.g. started from unified campaign) – return success so frontend doesn't show error
+    if (campaign.status === "running" || campaign.status === "completed") {
+      return res.json({
+        success: true,
+        message: "Campaign was already started",
+        data: campaign,
+      });
+    }
+
+    if (campaign.status !== "draft" && campaign.status !== "scheduled") {
+      return res.status(400).json({
+        success: false,
+        message: "Campaign cannot be started in its current status",
+      });
+    }
+
     campaign.status = "running";
     campaign.startDate = new Date();
     await campaign.save();
@@ -301,14 +321,13 @@ const sendCampaignMessages = async (campaign) => {
 const updateCampaign = async (req, res) => {
   try {
     const { campaignId } = req.params;
-    const organizationId = req.user.orgId;
+    const organizationId = req.user.orgId?._id || req.user.orgId;
     const updates = req.body;
 
-    const campaign = await WhatsAppCampaign.findOne({
-      _id: campaignId,
-      organizationId,
-      status: { $in: ["draft", "scheduled"] },
-    });
+    const query = { _id: campaignId };
+    if (organizationId) query.organizationId = organizationId;
+    query.status = { $in: ["draft", "scheduled"] };
+    const campaign = await WhatsAppCampaign.findOne(query);
 
     if (!campaign) {
       return res.status(404).json({
@@ -349,13 +368,12 @@ const updateCampaign = async (req, res) => {
 const deleteCampaign = async (req, res) => {
   try {
     const { campaignId } = req.params;
-    const organizationId = req.user.orgId;
+    const organizationId = req.user.orgId?._id || req.user.orgId;
 
-    const campaign = await WhatsAppCampaign.findOne({
-      _id: campaignId,
-      organizationId,
-      status: { $in: ["draft", "scheduled"] },
-    });
+    const query = { _id: campaignId };
+    if (organizationId) query.organizationId = organizationId;
+    query.status = { $in: ["draft", "scheduled"] };
+    const campaign = await WhatsAppCampaign.findOne(query);
 
     if (!campaign) {
       return res.status(404).json({
@@ -382,12 +400,11 @@ const deleteCampaign = async (req, res) => {
 const getCampaignAnalytics = async (req, res) => {
   try {
     const { campaignId } = req.params;
-    const organizationId = req.user.orgId;
+    const organizationId = req.user.orgId?._id || req.user.orgId;
 
-    const campaign = await WhatsAppCampaign.findOne({
-      _id: campaignId,
-      organizationId,
-    });
+    const query = { _id: campaignId };
+    if (organizationId) query.organizationId = organizationId;
+    const campaign = await WhatsAppCampaign.findOne(query);
 
     if (!campaign) {
       return res.status(404).json({
