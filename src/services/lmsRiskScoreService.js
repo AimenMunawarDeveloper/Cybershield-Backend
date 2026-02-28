@@ -1,6 +1,7 @@
 const Course = require("../models/Course");
 const CourseProgress = require("../models/CourseProgress");
 const User = require("../models/User");
+const { updateUserCombinedLearningScore } = require("./combinedLearningScoreService");
 
 const ELIGIBLE_ROLES = ["affiliated", "non_affiliated"];
 
@@ -79,10 +80,11 @@ async function computeLmsRiskScore(userId) {
 }
 
 async function updateUserLmsRiskScore(userId) {
-  const user = await User.findById(userId).select("role lmsRiskScore").lean();
+  const user = await User.findById(userId).select("role learningScoreLms").lean();
   if (!user || !isEligibleForLmsRiskScoring(user.role)) return;
   const score = await computeLmsRiskScore(userId);
-  await User.updateOne({ _id: userId }, { $set: { lmsRiskScore: score } });
+  await User.updateOne({ _id: userId }, { $set: { learningScoreLms: score } });
+  await updateUserCombinedLearningScore(userId, { lms: score }).catch((err) => console.error("[LmsRisk] updateUserCombinedLearningScore failed:", err.message));
 }
 
 module.exports = {

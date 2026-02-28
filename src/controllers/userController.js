@@ -32,29 +32,37 @@ const getUserProfile = async (req, res) => {
       transformedBadges = [];
     }
     
-    // Email risk score: compounded from EmailRiskEvents only for affiliated / non_affiliated (decay applied).
-    let emailRiskScore = 0;
+    // Learning scores (0–1, higher = better). Email/WhatsApp: no events = 1; with events = 1 - risk (decreases on open/click/credentials).
+    let emailScore = 0;
     if (isEligibleForEmailRiskScoring(user.role)) {
-      emailRiskScore = await computeEmailRiskScore(user._id);
+      const rawRisk = await computeEmailRiskScore(user._id);
+      emailScore = rawRisk === 0 ? 1 : Math.max(0, Math.min(1, 1 - rawRisk));
     } else {
-      emailRiskScore = user.emailRiskScore != null ? user.emailRiskScore : 0;
+      emailScore = user.learningScoreEmail != null ? user.learningScoreEmail : 0;
     }
 
-    // WhatsApp risk score: compounded from WhatsAppRiskEvents only for affiliated / non_affiliated.
-    let whatsappRiskScore = 0;
+    let whatsappScore = 0;
     if (isEligibleForWhatsAppRiskScoring(user.role)) {
-      whatsappRiskScore = await computeWhatsAppRiskScore(user._id);
+      const rawRisk = await computeWhatsAppRiskScore(user._id);
+      whatsappScore = rawRisk === 0 ? 1 : Math.max(0, Math.min(1, 1 - rawRisk));
     } else {
-      whatsappRiskScore = user.whatsappRiskScore != null ? user.whatsappRiskScore : 0;
+      whatsappScore = user.learningScoreWhatsapp != null ? user.learningScoreWhatsapp : 0;
     }
 
-    // LMS risk score: 1 - (training completed / total available). Only for affiliated / non_affiliated.
-    let lmsRiskScore = 0;
+    let lmsScore = 0;
     if (isEligibleForLmsRiskScoring(user.role)) {
-      lmsRiskScore = await computeLmsRiskScore(user._id);
+      lmsScore = await computeLmsRiskScore(user._id);
     } else {
-      lmsRiskScore = user.lmsRiskScore != null ? user.lmsRiskScore : 0;
+      lmsScore = user.learningScoreLms != null ? user.learningScoreLms : 0;
     }
+
+    const voiceScore = user.learningScoreVoice != null ? user.learningScoreVoice : 0;
+    const learningScores = {
+      email: Math.round(emailScore * 100) / 100,
+      whatsapp: Math.round(whatsappScore * 100) / 100,
+      lms: Math.round(lmsScore * 100) / 100,
+      voice: Math.round((voiceScore ?? 0) * 100) / 100
+    };
 
     // Merge local and Clerk data
     const profile = {
@@ -68,11 +76,8 @@ const getUserProfile = async (req, res) => {
       orgName: user.orgId?.name || null,
       groupIds: user.groupIds,
       status: user.status,
-      points: user.points,
       learningScore: user.learningScore,
-      emailRiskScore,
-      whatsappRiskScore,
-      lmsRiskScore,
+      learningScores,
       badges: transformedBadges,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,

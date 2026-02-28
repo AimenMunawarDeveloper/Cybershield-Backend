@@ -1,5 +1,6 @@
 const EmailRiskEvent = require("../models/EmailRiskEvent");
 const User = require("../models/User");
+const { updateUserCombinedLearningScore } = require("./combinedLearningScoreService");
 
 const EMAIL_RISK_DECAY_RATE = 0.95; // Each day's influence decreases by 5%
 const ELIGIBLE_ROLES = ["affiliated", "non_affiliated"];
@@ -55,11 +56,11 @@ function getEmailRiskWeight(eventType) {
 }
 
 /**
- * Update stored email risk score on User model (only for eligible roles).
+ * Update stored learning score (email) on User model. Stored as 1 - risk so higher = better.
  */
 async function updateUserEmailRiskScore(userId) {
   console.log("[EmailRisk] updateUserEmailRiskScore called for userId=", userId);
-  const user = await User.findById(userId).select("role emailRiskScore").lean();
+  const user = await User.findById(userId).select("role learningScoreEmail").lean();
   if (!user) {
     console.log("[EmailRisk] updateUserEmailRiskScore skip: user not found", userId);
     return;
@@ -68,10 +69,14 @@ async function updateUserEmailRiskScore(userId) {
     console.log("[EmailRisk] updateUserEmailRiskScore skip: role not eligible", { userId, role: user.role });
     return;
   }
-  const previousScore = user.emailRiskScore;
-  const score = await computeEmailRiskScore(userId);
-  await User.updateOne({ _id: userId }, { $set: { emailRiskScore: score } });
-  console.log("[EmailRisk] updateUserEmailRiskScore done", { userId, previousScore, newScore: score });
+  const previousStored = user.learningScoreEmail;
+  const rawRisk = await computeEmailRiskScore(userId);
+  // No events = 1 (perfect). With events, learning score = 1 - risk (decreases on open/click/credentials).
+  const learningScore = rawRisk === 0 ? 1 : Math.round((1 - rawRisk) * 100) / 100;
+  const valueToSet = Math.max(0, Math.min(1, learningScore));
+  await User.updateOne({ _id: userId }, { $set: { learningScoreEmail: valueToSet } });
+  await updateUserCombinedLearningScore(userId, { email: valueToSet }).catch((err) => console.error("[EmailRisk] updateUserCombinedLearningScore failed:", err.message));
+  console.log("[EmailRisk] updateUserEmailRiskScore done", { userId, previousStored, rawRisk, learningScore });
 }
 
 module.exports = {

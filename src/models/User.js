@@ -40,31 +40,31 @@ const userSchema = new mongoose.Schema({
     enum: ['invited', 'active', 'suspended'],
     default: 'active'
   },
-  points: {
-    type: Number,
-    default: 0
-  },
+  // Combined learning score (0–100): weighted average of email, whatsapp, lms, voice. Recalculated when any of those updates.
   learningScore: {
     type: Number,
     default: 0
   },
-  emailRiskScore: {
+  // Learning scores (0–1): higher = better. Email/WhatsApp: no events = 1; with events = 1 - risk.
+  learningScoreEmail: {
     type: Number,
     default: 0
   },
-  whatsappRiskScore: {
+  // WhatsApp learning score only. Do not use a field named whatsappRiskScore.
+  learningScoreWhatsapp: {
     type: Number,
     default: 0
   },
-  lmsRiskScore: {
+  learningScoreLms: {
     type: Number,
     default: 0
   },
-  voiceRiskScore: {
+  // Voice phishing: latest campaign score (0–1); higher = better
+  learningScoreVoice: {
     type: Number,
     default: 0
   },
-  incidentRiskScore: {
+  learningScoreIncident: {
     type: Number,
     default: 0
   },
@@ -73,6 +73,15 @@ const userSchema = new mongoose.Schema({
   }]
 }, {
   timestamps: true
+});
+
+// Never persist whatsappRiskScore — only learningScoreWhatsapp is valid. Strip if present (e.g. from old data).
+userSchema.pre('save', function (next) {
+  if (this.isModified('whatsappRiskScore') || this.whatsappRiskScore !== undefined) {
+    this.whatsappRiskScore = undefined;
+    delete this._doc.whatsappRiskScore;
+  }
+  next();
 });
 
 // Index for efficient queries

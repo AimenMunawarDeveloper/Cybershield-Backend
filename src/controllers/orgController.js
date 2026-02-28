@@ -3,6 +3,8 @@ const User = require('../models/User');
 const Group = require('../models/Group');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
+const { isEligibleForEmailRiskScoring, computeEmailRiskScore } = require('../services/emailRiskScoreService');
+const { isEligibleForWhatsAppRiskScoring, computeWhatsAppRiskScore } = require('../services/whatsappRiskScoreService');
 
 // POST /api/orgs/:orgId/bulk-invite
 const bulkInviteUsers = async (req, res) => {
@@ -380,8 +382,19 @@ const getOrgUsers = async (req, res) => {
 
     const total = await User.countDocuments(query);
 
-    res.json({
-      users: users.map(user => ({
+    // Compute email/whatsapp from events when eligible (so "no events" shows as 1, not stale 0)
+    const usersWithScores = await Promise.all(users.map(async (user) => {
+      let emailScore = user.learningScoreEmail != null ? user.learningScoreEmail : 0;
+      let whatsappScore = user.learningScoreWhatsapp != null ? user.learningScoreWhatsapp : 0;
+      if (isEligibleForEmailRiskScoring(user.role)) {
+        const rawRisk = await computeEmailRiskScore(user._id);
+        emailScore = rawRisk === 0 ? 1 : Math.max(0, Math.min(1, 1 - rawRisk));
+      }
+      if (isEligibleForWhatsAppRiskScoring(user.role)) {
+        const rawRisk = await computeWhatsAppRiskScore(user._id);
+        whatsappScore = rawRisk === 0 ? 1 : Math.max(0, Math.min(1, 1 - rawRisk));
+      }
+      return {
         _id: user._id,
         clerkId: user.clerkId,
         email: user.email,
@@ -390,13 +403,19 @@ const getOrgUsers = async (req, res) => {
         role: user.role,
         status: user.status,
         groups: user.groupIds.map(g => g.name),
-        points: user.points,
         learningScore: user.learningScore,
-        emailRiskScore: user.emailRiskScore,
-        whatsappRiskScore: user.whatsappRiskScore,
-        lmsRiskScore: user.lmsRiskScore,
+        learningScores: {
+          email: Math.round(emailScore * 100) / 100,
+          whatsapp: Math.round(whatsappScore * 100) / 100,
+          lms: user.learningScoreLms != null ? user.learningScoreLms : 0,
+          voice: user.learningScoreVoice != null ? user.learningScoreVoice : 0
+        },
         createdAt: user.createdAt
-      })),
+      };
+    }));
+
+    res.json({
+      users: usersWithScores,
       pagination: {
         current: parseInt(page),
         pages: Math.ceil(total / limit),

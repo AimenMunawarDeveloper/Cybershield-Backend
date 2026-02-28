@@ -838,19 +838,14 @@ const endConversation = async (req, res) => {
 
     await conversation.save();
 
-    // Update user's risk score based on performance
-    const user = await User.findById(userId);
+    // Update user: store voice learning score (0–1), then recalc combined learningScore (0–100)
+    const user = await User.findById(userId).select("learningScoreVoice");
     if (user) {
-      // Simple learning score update (can be enhanced)
-      // Lower score = higher risk
-      const riskAdjustment = analysis.analysis.score < 50 ? 10 : analysis.analysis.score < 75 ? 5 : -5;
-      user.learningScore = Math.max(0, Math.min(100, (user.learningScore || 0) + riskAdjustment));
-      
-      // Update points based on performance
-      const pointsEarned = Math.floor(analysis.analysis.score / 10);
-      user.points = (user.points || 0) + pointsEarned;
-      
-      await user.save();
+      const normalizedScore = Math.max(0, Math.min(1, (analysis.analysis.score ?? 0) / 100));
+      const learningScoreVoice = Math.round(normalizedScore * 100) / 100;
+      await User.updateOne({ _id: userId }, { $set: { learningScoreVoice } });
+      const { updateUserCombinedLearningScore } = require("../services/combinedLearningScoreService");
+      await updateUserCombinedLearningScore(userId, { voice: learningScoreVoice }).catch((err) => console.error("[VoicePhishing] updateUserCombinedLearningScore failed:", err.message));
     }
 
     console.log("Conversation analysis complete, sending response");
