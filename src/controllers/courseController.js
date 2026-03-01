@@ -7,6 +7,7 @@ const EmailTemplate = require("../models/EmailTemplate");
 const WhatsAppTemplate = require("../models/WhatsAppTemplate");
 const { isCourseCompleted, generateCertificateNumber } = require("./certificateController");
 const { updateUserLmsRiskScore } = require("../services/lmsRiskScoreService");
+const { markRemedialAssignmentsCompletedForCourse } = require("../services/remedialAssignmentService");
 const Certificate = require("../models/Certificate");
 const { getBadgeLabel } = require("../utils/badgeMapping");
 const nodemailerService = require("../services/nodemailerService");
@@ -790,6 +791,11 @@ async function markComplete(req, res) {
         console.error("Error assigning badges:", badgeError);
         // Don't fail the request if badge assignment fails
       }
+
+      // Mark any remedial assignments for this course as completed
+      markRemedialAssignmentsCompletedForCourse(userId, courseId).catch((err) =>
+        console.error("[RemedialAssignment] markRemedialAssignmentsCompletedForCourse failed:", err.message)
+      );
     }
     
     return res.status(200).json({
