@@ -744,14 +744,10 @@ const getCampaignAnalytics = async (req, res) => {
         enabled: campaign.emailConfig.enabled,
         totalTargets: campaign.stats.totalEmailTargets,
         totalSent: campaign.stats.totalEmailSent,
-        totalDelivered: campaign.stats.totalEmailDelivered,
         totalOpened: campaign.stats.totalEmailOpened,
         totalClicked: campaign.stats.totalEmailClicked,
         totalReported: campaign.stats.totalEmailReported,
         totalFailed: campaign.stats.totalEmailFailed,
-        deliveryRate: campaign.stats.totalEmailSent > 0
-          ? ((campaign.stats.totalEmailDelivered / campaign.stats.totalEmailSent) * 100).toFixed(2)
-          : 0,
         openRate: campaign.stats.totalEmailSent > 0
           ? ((campaign.stats.totalEmailOpened / campaign.stats.totalEmailSent) * 100).toFixed(2)
           : 0,
