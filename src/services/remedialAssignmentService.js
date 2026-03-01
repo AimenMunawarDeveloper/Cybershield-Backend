@@ -15,6 +15,18 @@ const SCORE_MID_OVERALL_MAX = 66;
 const COURSE_TITLE_PHISHING_BASIC = "Phishing basic";
 const COURSE_TITLE_PHISHING_ADVANCE = "Phishing advance";
 
+// Remedial course titles (by score rules)
+const COURSE_RECOGNIZING_RISKS = "Recognizing Online Risks & Scams";
+const COURSE_ADVANCED_PHISHING = "Advanced Phishing Detection & Threat Analysis";
+const COURSE_ADVANCED_DEFENSIVE = "Advanced Defensive Techniques & Email Security";
+
+/** (reason, courseTitle) for new remedial logic */
+const REMEDIAL_REASON_TO_TITLE = {
+  remedial_recognizing_risks: COURSE_RECOGNIZING_RISKS,
+  remedial_advanced_phishing: COURSE_ADVANCED_PHISHING,
+  remedial_advanced_defensive: COURSE_ADVANCED_DEFENSIVE,
+};
+
 /** Default days from assignment until deadline to complete the course. */
 const REMEDIAL_DEADLINE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -90,11 +102,47 @@ function escapeRegex(s) {
 }
 
 /**
+ * Decide which remedial course titles to assign based on scores.
+ * - Overall HIGH (67–100): no courses.
+ * - Overall LOW (0–33) and email & whatsapp low: Recognizing Online Risks & Scams, Advanced Phishing Detection & Threat Analysis.
+ * - Overall MID (34–66) and email & whatsapp low: Recognizing, Advanced Phishing, Advanced Defensive Techniques & Email Security.
+ * - Overall MID and email & whatsapp high: only Advanced Defensive Techniques & Email Security.
+ * - Overall MID and mixed (one low, one high): Recognizing, Advanced Phishing.
+ */
+function getDesiredRemedialReasons(overallScore, emailScore, whatsappScore) {
+  const isOverallHigh = overallScore > SCORE_MID_OVERALL_MAX;
+  const isOverallLow = overallScore <= SCORE_LOW_OVERALL_MAX;
+  const isOverallMid = overallScore >= SCORE_MID_OVERALL_MIN && overallScore <= SCORE_MID_OVERALL_MAX;
+  const emailLow = emailScore <= SCORE_LOW_CHANNEL;
+  const whatsappLow = whatsappScore <= SCORE_LOW_CHANNEL;
+  const emailAndWhatsappLow = emailLow && whatsappLow;
+  const emailAndWhatsappHigh = !emailLow && !whatsappLow;
+
+  if (isOverallHigh) return [];
+  if (isOverallLow) {
+    // When email and whatsapp learning score is low → Recognizing + Advanced Phishing
+    return ["remedial_recognizing_risks", "remedial_advanced_phishing"];
+  }
+  if (isOverallMid) {
+    if (emailAndWhatsappLow) {
+      return ["remedial_recognizing_risks", "remedial_advanced_phishing", "remedial_advanced_defensive"];
+    }
+    if (emailAndWhatsappHigh) {
+      return ["remedial_advanced_defensive"];
+    }
+    // Mixed: one low one high → Recognizing + Advanced Phishing
+    return ["remedial_recognizing_risks", "remedial_advanced_phishing"];
+  }
+  return [];
+}
+
+/**
  * Ensure remedial assignments for a user based on learning scores.
- * At most one course with email activity and one with WhatsApp activity per user.
- * - Overall LOW (0–33): one email-activity course, one whatsapp-activity course, Phishing basic.
- * - Overall MID (34–66): Phishing advance; if email low add one email-activity; if whatsapp low add one whatsapp-activity.
- * - Overall HIGH (67–100): do not assign any remedial courses.
+ * Assigns specific courses by title:
+ * - Low (email & whatsapp low): Recognizing Online Risks & Scams, Advanced Phishing Detection & Threat Analysis.
+ * - Mid + email & whatsapp low: those two + Advanced Defensive Techniques & Email Security.
+ * - Mid + email & whatsapp high: only Advanced Defensive Techniques & Email Security.
+ * - High overall: no remedials.
  */
 async function ensureRemedialAssignments(userId) {
   if (!userId) {
@@ -125,89 +173,9 @@ async function ensureRemedialAssignments(userId) {
   const overallScore = user.learningScore != null ? user.learningScore : 0; // 0–100
   console.log("[RemedialAssignment] ensureRemedialAssignments scores", { userId: userId.toString(), overallScore, emailScore, whatsappScore, role: user.role });
 
-  // Only consider active assignments (not completed, not cancelled) when deciding what to create
-  const existing = await RemedialAssignment.find({
-    user: userId,
-    completedAt: { $exists: false },
-    cancelledAt: { $exists: false },
-  })
-    .select("reason course")
-    .lean();
-  const existingReasons = new Set(existing.map((a) => a.reason));
+  const desiredReasons = getDesiredRemedialReasons(overallScore, emailScore, whatsappScore);
 
-  // At most one email-activity and one whatsapp-activity course per user (any reason)
-  const hasEmailActivity = existingReasons.has("email_activity") || existingReasons.has("email_low") || existingReasons.has("overall_low_email");
-  const hasWhatsappActivity = existingReasons.has("whatsapp_activity") || existingReasons.has("whatsapp_low") || existingReasons.has("overall_low_whatsapp");
-
-  const toCreate = [];
-
-  const now = new Date();
-  const dueAt = new Date(now.getTime() + REMEDIAL_DEADLINE_DAYS * MS_PER_DAY);
-
-  const isOverallLow = overallScore <= SCORE_LOW_OVERALL_MAX;
-  const isOverallMid = overallScore >= SCORE_MID_OVERALL_MIN && overallScore <= SCORE_MID_OVERALL_MAX;
-  const emailLow = emailScore <= SCORE_LOW_CHANNEL;
-  const whatsappLow = whatsappScore <= SCORE_LOW_CHANNEL;
-
-  // Overall LOW (0–33) → one email-activity, one whatsapp-activity, Phishing basic
-  if (isOverallLow) {
-    if (!hasEmailActivity) {
-      const course = await findOneCourseWithEmailActivity(filter);
-      if (course) {
-        toCreate.push({ user: userId, course: course._id, reason: "email_activity", dueAt });
-        existingReasons.add("email_activity");
-      } else {
-        console.log("[RemedialAssignment] no course with email activity found for user", userId.toString(), "filter", JSON.stringify(filter));
-      }
-    }
-    if (!hasWhatsappActivity) {
-      const course = await findOneCourseWithWhatsAppActivity(filter);
-      if (course) {
-        toCreate.push({ user: userId, course: course._id, reason: "whatsapp_activity", dueAt });
-        existingReasons.add("whatsapp_activity");
-      } else {
-        console.log("[RemedialAssignment] no course with whatsapp activity found for user", userId.toString(), "filter", JSON.stringify(filter));
-      }
-    }
-    if (!existingReasons.has("overall_low_basic")) {
-      const course = await findCourseByTitle(COURSE_TITLE_PHISHING_BASIC, filter);
-      if (course) {
-        toCreate.push({ user: userId, course: course._id, reason: "overall_low_basic", dueAt });
-        existingReasons.add("overall_low_basic");
-      }
-    }
-  }
-
-  // Overall MID (34–66) → Phishing advance + one email-activity if email low + one whatsapp-activity if whatsapp low
-  if (isOverallMid) {
-    if (!existingReasons.has("overall_mid")) {
-      const course = await findCourseByTitle(COURSE_TITLE_PHISHING_ADVANCE, filter);
-      if (course) {
-        toCreate.push({ user: userId, course: course._id, reason: "overall_mid", dueAt });
-        existingReasons.add("overall_mid");
-      }
-    }
-    if (emailLow && !hasEmailActivity) {
-      const course = await findOneCourseWithEmailActivity(filter);
-      if (course) {
-        toCreate.push({ user: userId, course: course._id, reason: "email_activity", dueAt });
-        existingReasons.add("email_activity");
-      } else {
-        console.log("[RemedialAssignment] no course with email activity found for user", userId.toString(), "filter", JSON.stringify(filter));
-      }
-    }
-    if (whatsappLow && !hasWhatsappActivity) {
-      const course = await findOneCourseWithWhatsAppActivity(filter);
-      if (course) {
-        toCreate.push({ user: userId, course: course._id, reason: "whatsapp_activity", dueAt });
-        existingReasons.add("whatsapp_activity");
-      } else {
-        console.log("[RemedialAssignment] no course with whatsapp activity found for user", userId.toString(), "filter", JSON.stringify(filter));
-      }
-    }
-  }
-
-  // Overall HIGH (67–100) → do not assign; cancel any existing incomplete remedial assignments
+  // Overall HIGH → cancel all active assignments, assign nothing
   if (overallScore > SCORE_MID_OVERALL_MAX) {
     const result = await RemedialAssignment.updateMany(
       { user: userId, completedAt: { $exists: false }, cancelledAt: { $exists: false } },
@@ -220,27 +188,73 @@ async function ensureRemedialAssignments(userId) {
     return;
   }
 
+  const now = new Date();
+  const dueAt = new Date(now.getTime() + REMEDIAL_DEADLINE_DAYS * MS_PER_DAY);
+
+  // Resolve course IDs for desired reasons (by title)
+  const toCreate = [];
+  for (const reason of desiredReasons) {
+    const title = REMEDIAL_REASON_TO_TITLE[reason];
+    if (!title) continue;
+    const course = await findCourseByTitle(title, filter);
+    if (course) {
+      toCreate.push({ user: userId, course: course._id, reason, dueAt });
+    } else {
+      console.log("[RemedialAssignment] course not found for user", userId.toString(), "title", title, "filter", JSON.stringify(filter));
+    }
+  }
+
+  const desiredCourseIds = new Set(toCreate.map((c) => c.course.toString()));
+
+  // Cancel any active assignment whose course is not in the desired set (sync state)
+  const active = await RemedialAssignment.find({
+    user: userId,
+    completedAt: { $exists: false },
+    cancelledAt: { $exists: false },
+  })
+    .select("_id course reason")
+    .lean();
+  for (const a of active) {
+    if (!a.course) continue;
+    const courseIdStr = a.course.toString();
+    if (!desiredCourseIds.has(courseIdStr)) {
+      await RemedialAssignment.updateOne({ _id: a._id }, { $set: { cancelledAt: new Date() } });
+      console.log("[RemedialAssignment] cancelled assignment (not in desired set)", { userId: userId.toString(), reason: a.reason });
+    }
+  }
+
   if (toCreate.length === 0) {
-    console.log("[RemedialAssignment] ensureRemedialAssignments: no assignments to create (existing or no matching courses)", { userId: userId.toString(), existingReasons: [...existingReasons], isOverallLow, isOverallMid });
+    console.log("[RemedialAssignment] ensureRemedialAssignments: no assignments to create", { userId: userId.toString(), desiredReasons });
     return;
   }
 
   try {
-    // Reactivate any cancelled assignments for these reasons (score dropped from high to low/mid)
     const toInsert = [];
     for (const item of toCreate) {
       const updated = await RemedialAssignment.updateOne(
         { user: userId, reason: item.reason, cancelledAt: { $exists: true } },
         { $unset: { cancelledAt: 1 }, $set: { dueAt: item.dueAt } }
       );
-      if (updated.modifiedCount === 0) toInsert.push(item);
+      if (updated.modifiedCount === 0) {
+        const exists = await RemedialAssignment.findOne({
+          user: userId,
+          reason: item.reason,
+          completedAt: { $exists: false },
+          cancelledAt: { $exists: false },
+        }).select("_id").lean();
+        if (!exists) toInsert.push(item);
+      }
     }
     if (toInsert.length > 0) {
       await RemedialAssignment.insertMany(toInsert);
       console.log("[RemedialAssignment] created", toInsert.length, "for user", userId.toString(), "reasons:", toInsert.map((a) => a.reason));
     }
     if (toCreate.length > toInsert.length) {
-      console.log("[RemedialAssignment] reactivated", toCreate.length - toInsert.length, "for user", userId.toString());
+      const reactivated = toCreate.length - toInsert.length;
+      const alreadyHad = toCreate.length - reactivated;
+      if (reactivated > 0) {
+        console.log("[RemedialAssignment] reactivated", reactivated, "for user", userId.toString());
+      }
     }
   } catch (err) {
     if (err.code !== 11000) {
@@ -304,5 +318,9 @@ module.exports = {
   SCORE_MID_OVERALL_MAX,
   COURSE_TITLE_PHISHING_BASIC,
   COURSE_TITLE_PHISHING_ADVANCE,
+  COURSE_RECOGNIZING_RISKS,
+  COURSE_ADVANCED_PHISHING,
+  COURSE_ADVANCED_DEFENSIVE,
+  getDesiredRemedialReasons,
   REMEDIAL_DEADLINE_DAYS,
 };
