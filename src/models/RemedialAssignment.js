@@ -7,11 +7,14 @@ const remedialAssignmentSchema = new mongoose.Schema(
     reason: {
       type: String,
       enum: [
-        "email_activity",     // One course with email activity (when email score low or overall low)
-        "whatsapp_activity",  // One course with WhatsApp activity (when whatsapp score low or overall low)
-        "overall_mid",       // Overall score mid → Phishing advance
-        "overall_low_basic",  // Overall score low → Phishing basic
+        "remedial_recognizing_risks",   // Recognizing Online Risks & Scams
+        "remedial_advanced_phishing",    // Advanced Phishing Detection & Threat Analysis
+        "remedial_advanced_defensive",  // Advanced Defensive Techniques & Email Security
         // Legacy (kept for existing documents)
+        "email_activity",
+        "whatsapp_activity",
+        "overall_mid",
+        "overall_low_basic",
         "email_low",
         "whatsapp_low",
         "overall_low_email",
