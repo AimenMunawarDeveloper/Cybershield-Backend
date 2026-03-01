@@ -4,6 +4,8 @@ const { transformBadgesFromLabels } = require('../utils/badgeMapping');
 const { isEligibleForEmailRiskScoring, computeEmailRiskScore } = require('../services/emailRiskScoreService');
 const { isEligibleForWhatsAppRiskScoring, computeWhatsAppRiskScore } = require('../services/whatsappRiskScoreService');
 const { isEligibleForLmsRiskScoring, computeLmsRiskScore } = require('../services/lmsRiskScoreService');
+const { getRemedialAssignmentsForUser, ensureRemedialAssignments } = require('../services/remedialAssignmentService');
+const { updateUserCombinedLearningScore, computeCombinedLearningScore } = require('../services/combinedLearningScoreService');
 
 // GET /api/users/me
 const getUserProfile = async (req, res) => {
@@ -88,6 +90,42 @@ const getUserProfile = async (req, res) => {
       lastSignInAt: clerkUser?.lastSignInAt || null
     };
 
+    // Include remedial assignments (courses assigned due to low/mid learning scores)
+    try {
+      if (user.role === 'affiliated' || user.role === 'non_affiliated') {
+        // Persist current computed scores to User so remedial logic sees the same scores as profile
+        await User.updateOne(
+          { _id: user._id },
+          {
+            $set: {
+              learningScoreEmail: emailScore,
+              learningScoreWhatsapp: whatsappScore,
+              learningScoreLms: lmsScore,
+              learningScoreVoice: voiceScore,
+            },
+          }
+        );
+        await updateUserCombinedLearningScore(user._id, {
+          email: emailScore,
+          whatsapp: whatsappScore,
+          lms: lmsScore,
+          voice: voiceScore,
+        });
+        await ensureRemedialAssignments(user._id);
+        profile.learningScore = computeCombinedLearningScore({
+          email: emailScore,
+          whatsapp: whatsappScore,
+          lms: lmsScore,
+          voice: voiceScore,
+        });
+      }
+      const remedialAssignments = await getRemedialAssignmentsForUser(user._id);
+      profile.remedialAssignments = remedialAssignments;
+    } catch (remedialErr) {
+      console.error('Error fetching remedial assignments:', remedialErr);
+      profile.remedialAssignments = [];
+    }
+
     res.json(profile);
   } catch (error) {
     console.error('Error fetching user profile:', error);
@@ -159,8 +197,21 @@ const updateProfile = async (req, res) => {
   }
 };
 
+// GET /api/users/me/remedial-assignments - get current user's remedial course assignments
+const getMyRemedialAssignments = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const assignments = await getRemedialAssignmentsForUser(userId);
+    res.json({ success: true, remedialAssignments: assignments });
+  } catch (error) {
+    console.error('Error fetching remedial assignments:', error);
+    res.status(500).json({ error: 'Failed to fetch remedial assignments' });
+  }
+};
+
 module.exports = {
   getUserProfile,
   getAllUsers,
-  updateProfile
+  updateProfile,
+  getMyRemedialAssignments
 };

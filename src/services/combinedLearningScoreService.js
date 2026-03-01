@@ -55,6 +55,12 @@ async function updateUserCombinedLearningScore(userId, overrides = {}) {
   } else {
     console.log("[CombinedLearningScore] updated", id?.toString?.(), "learningScore=", combined, "scores=", scores);
   }
+
+  // Remedial: assign courses when email/WhatsApp scores are low or overall is mid/low (fire-and-forget)
+  const { ensureRemedialAssignments } = require("./remedialAssignmentService");
+  ensureRemedialAssignments(userId).catch((err) =>
+    console.error("[CombinedLearningScore] ensureRemedialAssignments failed:", err.message)
+  );
 }
 
 module.exports = {
